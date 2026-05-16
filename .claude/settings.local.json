@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///wsl.localhost/Ubuntu/home/wowoow/open-source/mem0-main/**)",
+      "Bash(docker compose:*)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl -s http://localhost:8888/docs)",
+      "Bash(curl -s -X POST http://localhost:8888/memories -H 'Content-Type: application/json' -H 'X-API-Key: 1111' -d '{\"messages\":[{\"role\":\"user\",\"content\":\"I love pizza\"}], \"user_id\":\"u1\"}')",
+      "Bash(curl:*)",
+      "Bash(kill %1)",
+      "Bash(conda info *)",
+      "Bash(conda run *)",
+      "Bash(python -m py_compile mem0/memory/main.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('mem0/memory/main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")"
+    ]
+  }
+}

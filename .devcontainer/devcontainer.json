@@ -1,0 +1,22 @@
+{
+  "name": "mem0-devcontainer",
+  "build": {
+    "context": "..",
+    "dockerfile": "../server/dev.Dockerfile"
+  },
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "postCreateCommand": "pip install -r server/requirements.txt && pip install -e .[graph]",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.typeCheckingMode": "basic"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter"
+      ]
+    }
+  }
+}

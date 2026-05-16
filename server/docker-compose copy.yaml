@@ -1,0 +1,75 @@
+name: mem0-dev  # 项目名称，Docker 会以此作为容器命名的前缀
+
+services:
+  mem0:
+    build:
+      context: ..  # 指定构建上下文为当前目录的上一级，以便访问库代码
+      dockerfile: server/dev.Dockerfile  # 指定用于开发环境的具体 Dockerfile 路径
+    ports:
+      - "8888:8000"  # 端口映射：将主机的 8888 端口映射到容器的 8000 端口
+    env_file:
+      - .env  # 加载当前目录下的 .env 文件，将其中的变量注入容器环境变量
+    networks:
+      - mem0_network  # 加入名为 mem0_network 的自定义网络，实现容器间通信
+    volumes:
+      - ./history:/app/history  # 持久化存储：将本地 history 文件夹映射到容器内，保存 sqlite 等历史数据
+      - .:/app  # 热重载配置：将当前服务器代码目录挂载到容器，代码修改后容器内同步更新
+      - ../mem0:/app/packages/mem0  # 库依赖挂载：允许在开发应用的同时，直接调试和修改 mem0 核心库代码
+    depends_on:
+      postgres:
+        condition: service_healthy  # 依赖检查：仅在 postgres 容器健康检查通过后才启动此服务
+      neo4j:
+        condition: service_healthy  # 依赖检查：仅在 neo4j 容器健康检查通过后才启动此服务
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload  # 启动命令：使用 uvicorn 运行 FastAPI 应用并开启热重载
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1  # 环境变量：禁止 Python 生成 .pyc 编译文件，保持容器内文件系统整洁
+      - PYTHONUNBUFFERED=1  # 环境变量：强制标准输出直接流向终端，方便实时查看日志
+
+  postgres:
+    image: ankane/pgvector:v0.5.1  # 使用带有 pgvector 扩展的 PostgreSQL 镜像，用于向量检索
+    restart: on-failure  # 重启策略：如果容器非正常退出则自动重启
+    shm_size: "128mb"  # 共享内存大小：增加内存以防止在进行大规模向量索引或清理时报错
+    networks:
+      - mem0_network  # 加入自定义网络
+    environment:
+      - POSTGRES_USER=postgres  # 设置默认数据库用户名
+      - POSTGRES_PASSWORD=postgres  # 设置默认数据库密码
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "postgres", "-U", "postgres"]  # 健康检查：执行 pg_isready 确保数据库已准备好接受连接
+      interval: 5s  # 每 5 秒检查一次
+      timeout: 5s  # 检查超时时间
+      retries: 5  # 连续失败 5 次则标记为不健康
+    volumes:
+      - postgres_db:/var/lib/postgresql/data  # 命名卷持久化：将数据库数据保存在 docker 管理的卷中
+    ports:
+      - "8432:5432"  # 端口映射：外部可通过 8432 访问数据库，防止与本地 5432 端口冲突
+
+  neo4j:
+    image: neo4j:5.26.4  # 使用指定版本的 Neo4j 图数据库镜像
+    networks:
+      - mem0_network  # 加入自定义网络
+    healthcheck:
+      test: wget http://localhost:7687 || exit 1  # 健康检查：通过 wget 访问 Bolt 协议端口判断服务是否存活
+      interval: 1s  # 频繁检查以缩短等待时间
+      timeout: 10s  # 超时时间
+      retries: 20  # 由于图数据库启动较慢，允许重试 20 次
+      start_period: 90s  # 启动宽限期：给数据库 90 秒时间进行初始化，期间失败不计入重试次数
+    ports:
+      - "8474:7474" # HTTP 映射：用于浏览器访问 Neo4j 控制台 (localhost:8474)
+      - "8687:7687" # Bolt 映射：用于程序驱动程序进行高性能数据交互
+    volumes:
+      - neo4j_data:/data  # 命名卷持久化：保存图数据
+    environment:
+      - NEO4J_AUTH=neo4j/mem0graph  # 设置初始用户名和密码 (neo4j / mem0graph)
+      - NEO4J_PLUGINS=["apoc"]  # 插件配置：自动安装 APOC 扩展库（常用于复杂图操作）
+      - NEO4J_apoc_export_file_enabled=true  # 权限设置：允许 APOC 导出文件
+      - NEO4J_apoc_import_file_enabled=true  # 权限设置：允许 APOC 导入文件
+      - NEO4J_apoc_import_file_use__neo4j__config=true  # 权限设置：遵循标准导入路径配置
+
+volumes:
+  neo4j_data:  # 声明用于 Neo4j 的命名卷
+  postgres_db:  # 声明用于 PostgreSQL 的命名卷
+
+networks:
+  mem0_network:  # 声明自定义桥接网络，确保三个容器可以通过服务名互相发现
+    driver: bridge

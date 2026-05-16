@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>README.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<p align="center">
+  <a href="https://github.com/mem0ai/mem0">
+    <img src="file:///home/wowoow/open-source/mem0-main/docs/images/banner-sm.png" width="800px" alt="Mem0 - The Memory Layer for Personalized AI">
+  </a>
+</p>
+<p align="center" style="display: flex; justify-content: center; gap: 20px; align-items: center;">
+  <a href="https://trendshift.io/repositories/11194" target="blank">
+    <img src="https://trendshift.io/api/badge/repositories/11194" alt="mem0ai%2Fmem0 | Trendshift" width="250" height="55">
+  </a>
+</p>
+<p align="center">
+  <a href="https://mem0.ai">Learn more</a>
+  &#xB7;
+  <a href="https://mem0.dev/DiG">Join Discord</a>
+  &#xB7;
+  <a href="https://mem0.dev/demo">Demo</a>
+  &#xB7;
+  <a href="https://mem0.dev/openmemory">OpenMemory</a>
+</p>
+<p align="center">
+  <a href="https://mem0.dev/DiG">
+    <img src="https://img.shields.io/badge/Discord-%235865F2.svg?&amp;logo=discord&amp;logoColor=white" alt="Mem0 Discord">
+  </a>
+  <a href="https://pepy.tech/project/mem0ai">
+    <img src="https://img.shields.io/pypi/dm/mem0ai" alt="Mem0 PyPI - Downloads">
+  </a>
+  <a href="https://github.com/mem0ai/mem0">
+    <img src="https://img.shields.io/github/commit-activity/m/mem0ai/mem0?style=flat-square" alt="GitHub commit activity">
+  </a>
+  <a href="https://pypi.org/project/mem0ai" target="blank">
+    <img src="https://img.shields.io/pypi/v/mem0ai?color=%2334D058&amp;label=pypi%20package" alt="Package version">
+  </a>
+  <a href="https://www.npmjs.com/package/mem0ai" target="blank">
+    <img src="https://img.shields.io/npm/v/mem0ai" alt="Npm package">
+  </a>
+  <a href="https://www.ycombinator.com/companies/mem0">
+    <img src="https://img.shields.io/badge/Y%20Combinator-S24-orange?style=flat-square" alt="Y Combinator S24">
+  </a>
+</p>
+<p align="center">
+  <a href="https://mem0.ai/research"><strong>&#x1F4C4; Building Production-Ready AI Agents with Scalable Long-Term Memory &#x2192;</strong></a>
+</p>
+<p align="center">
+  <strong>&#x26A1; +26% Accuracy vs. OpenAI Memory &#x2022; &#x1F680; 91% Faster &#x2022; &#x1F4B0; 90% Fewer Tokens</strong>
+</p>
+<blockquote>
+<p><strong>🎉 mem0ai v1.0.0 is now available!</strong> This major release includes API modernization, improved vector store support, and enhanced GCP integration. <a href="MIGRATION_GUIDE_v1.0.md">See migration guide →</a></p>
+</blockquote>
+<h2 id="%F0%9F%94%A5-research-highlights">🔥 Research Highlights</h2>
+<ul>
+<li><strong>+26% Accuracy</strong> over OpenAI Memory on the LOCOMO benchmark</li>
+<li><strong>91% Faster Responses</strong> than full-context, ensuring low-latency at scale</li>
+<li><strong>90% Lower Token Usage</strong> than full-context, cutting costs without compromise</li>
+<li><a href="https://mem0.ai/research">Read the full paper</a></li>
+</ul>
+<h1 id="introduction">Introduction</h1>
+<p><a href="https://mem0.ai">Mem0</a> (&quot;mem-zero&quot;) enhances AI assistants and agents with an intelligent memory layer, enabling personalized AI interactions. It remembers user preferences, adapts to individual needs, and continuously learns over time—ideal for customer support chatbots, AI assistants, and autonomous systems.</p>
+<h3 id="key-features--use-cases">Key Features &amp; Use Cases</h3>
+<p><strong>Core Capabilities:</strong></p>
+<ul>
+<li><strong>Multi-Level Memory</strong>: Seamlessly retains User, Session, and Agent state with adaptive personalization</li>
+<li><strong>Developer-Friendly</strong>: Intuitive API, cross-platform SDKs, and a fully managed service option</li>
+</ul>
+<p><strong>Applications:</strong></p>
+<ul>
+<li><strong>AI Assistants</strong>: Consistent, context-rich conversations</li>
+<li><strong>Customer Support</strong>: Recall past tickets and user history for tailored help</li>
+<li><strong>Healthcare</strong>: Track patient preferences and history for personalized care</li>
+<li><strong>Productivity &amp; Gaming</strong>: Adaptive workflows and environments based on user behavior</li>
+</ul>
+<h2 id="%F0%9F%9A%80-quickstart-guide-a-name%22quickstart%22a">🚀 Quickstart Guide <a name="quickstart"></a></h2>
+<p>Choose between our hosted platform or self-hosted package:</p>
+<h3 id="hosted-platform">Hosted Platform</h3>
+<p>Get up and running in minutes with automatic updates, analytics, and enterprise security.</p>
+<ol>
+<li>Sign up on <a href="https://app.mem0.ai">Mem0 Platform</a></li>
+<li>Embed the memory layer via SDK or API keys</li>
+</ol>
+<h3 id="self-hosted-open-source">Self-Hosted (Open Source)</h3>
+<p>Install the sdk via pip:</p>
+<pre class="hljs"><code><div>pip install mem0ai
+</div></code></pre>
+<p>Install sdk via npm:</p>
+<pre class="hljs"><code><div>npm install mem0ai
+</div></code></pre>
+<h3 id="basic-usage">Basic Usage</h3>
+<p>Mem0 requires an LLM to function, with `gpt-4.1-nano-2025-04-14 from OpenAI as the default. However, it supports a variety of LLMs; for details, refer to our <a href="https://docs.mem0.ai/components/llms/overview">Supported LLMs documentation</a>.</p>
+<p>First step is to instantiate the memory:</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">from</span> openai <span class="hljs-keyword">import</span> OpenAI
+<span class="hljs-keyword">from</span> mem0 <span class="hljs-keyword">import</span> Memory
+
+openai_client = OpenAI()
+memory = Memory()
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">chat_with_memories</span><span class="hljs-params">(message: str, user_id: str = <span class="hljs-string">"default_user"</span>)</span> -&gt; str:</span>
+    <span class="hljs-comment"># Retrieve relevant memories</span>
+    relevant_memories = memory.search(query=message, user_id=user_id, limit=<span class="hljs-number">3</span>)
+    memories_str = <span class="hljs-string">"\n"</span>.join(<span class="hljs-string">f"- <span class="hljs-subst">{entry[<span class="hljs-string">'memory'</span>]}</span>"</span> <span class="hljs-keyword">for</span> entry <span class="hljs-keyword">in</span> relevant_memories[<span class="hljs-string">"results"</span>])
+
+    <span class="hljs-comment"># Generate Assistant response</span>
+    system_prompt = <span class="hljs-string">f"You are a helpful AI. Answer the question based on query and memories.\nUser Memories:\n<span class="hljs-subst">{memories_str}</span>"</span>
+    messages = [{<span class="hljs-string">"role"</span>: <span class="hljs-string">"system"</span>, <span class="hljs-string">"content"</span>: system_prompt}, {<span class="hljs-string">"role"</span>: <span class="hljs-string">"user"</span>, <span class="hljs-string">"content"</span>: message}]
+    response = openai_client.chat.completions.create(model=<span class="hljs-string">"gpt-4.1-nano-2025-04-14"</span>, messages=messages)
+    assistant_response = response.choices[<span class="hljs-number">0</span>].message.content
+
+    <span class="hljs-comment"># Create new memories from the conversation</span>
+    messages.append({<span class="hljs-string">"role"</span>: <span class="hljs-string">"assistant"</span>, <span class="hljs-string">"content"</span>: assistant_response})
+    memory.add(messages, user_id=user_id)
+
+    <span class="hljs-keyword">return</span> assistant_response
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">main</span><span class="hljs-params">()</span>:</span>
+    print(<span class="hljs-string">"Chat with AI (type 'exit' to quit)"</span>)
+    <span class="hljs-keyword">while</span> <span class="hljs-literal">True</span>:
+        user_input = input(<span class="hljs-string">"You: "</span>).strip()
+        <span class="hljs-keyword">if</span> user_input.lower() == <span class="hljs-string">'exit'</span>:
+            print(<span class="hljs-string">"Goodbye!"</span>)
+            <span class="hljs-keyword">break</span>
+        print(<span class="hljs-string">f"AI: <span class="hljs-subst">{chat_with_memories(user_input)}</span>"</span>)
+
+<span class="hljs-keyword">if</span> __name__ == <span class="hljs-string">"__main__"</span>:
+    main()
+</div></code></pre>
+<p>For detailed integration steps, see the <a href="https://docs.mem0.ai/quickstart">Quickstart</a> and <a href="https://docs.mem0.ai/api-reference">API Reference</a>.</p>
+<h2 id="%F0%9F%94%97-integrations--demos">🔗 Integrations &amp; Demos</h2>
+<ul>
+<li><strong>ChatGPT with Memory</strong>: Personalized chat powered by Mem0 (<a href="https://mem0.dev/demo">Live Demo</a>)</li>
+<li><strong>Browser Extension</strong>: Store memories across ChatGPT, Perplexity, and Claude (<a href="https://chromewebstore.google.com/detail/onihkkbipkfeijkadecaafbgagkhglop?utm_source=item-share-cb">Chrome Extension</a>)</li>
+<li><strong>Langgraph Support</strong>: Build a customer bot with Langgraph + Mem0 (<a href="https://docs.mem0.ai/integrations/langgraph">Guide</a>)</li>
+<li><strong>CrewAI Integration</strong>: Tailor CrewAI outputs with Mem0 (<a href="https://docs.mem0.ai/integrations/crewai">Example</a>)</li>
+</ul>
+<h2 id="%F0%9F%93%9A-documentation--support">📚 Documentation &amp; Support</h2>
+<ul>
+<li>Full docs: https://docs.mem0.ai</li>
+<li>Community: <a href="https://mem0.dev/DiG">Discord</a> · <a href="https://x.com/mem0ai">Twitter</a></li>
+<li>Contact: founders@mem0.ai</li>
+</ul>
+<h2 id="citation">Citation</h2>
+<p>We now have a paper you can cite:</p>
+<pre class="hljs"><code><div>@article{mem0,
+  title={Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory},
+  author={Chhikara, Prateek and Khant, Dev and Aryan, Saket and Singh, Taranjeet and Yadav, Deshraj},
+  journal={arXiv preprint arXiv:2504.19413},
+  year={2025}
+}
+</div></code></pre>
+<h2 id="%E2%9A%96%EF%B8%8F-license">⚖️ License</h2>
+<p>Apache 2.0 — see the <a href="https://github.com/mem0ai/mem0/blob/main/LICENSE">LICENSE</a> file for details.</p>
+
+</body>
+</html>
