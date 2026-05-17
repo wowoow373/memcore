@@ -129,15 +129,15 @@ def test_search_handles_incomplete_payloads(mock_sqlite, mock_llm_factory, mock_
     complete_memory = MockVectorMemory("mem_2", {"data": "content", "hash": "def456"})
 
     mock_vector_store.search.return_value = [incomplete_memory, complete_memory]
-    
+
     mock_embedder = MagicMock()
     mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
     memory.embedding_model = mock_embedder
 
-    result = memory._search_vector_store("test", {"user_id": "test"}, 10)
-    
-    assert len(result) == 2
-    memories_by_id = {mem["id"]: mem for mem in result}
+    result = memory.search("test", user_id="test")
+
+    assert len(result["results"]) == 2
+    memories_by_id = {mem["id"]: mem for mem in result["results"]}
 
     assert memories_by_id["mem_1"]["memory"] == ""
     assert memories_by_id["mem_2"]["memory"] == "content"

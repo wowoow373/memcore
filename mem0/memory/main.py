@@ -302,6 +302,16 @@ class Memory(MemoryBase):
             self._telemetry_vector_store = VectorStoreFactory.create(
                 self.config.vector_store.provider, telemetry_config
             )
+
+        # Initialize SearchEngine for unified recall
+        from mem0.memory.search_engine import SearchEngine
+        self.search_engine = SearchEngine(
+            embedding_model=self.embedding_model,
+            vector_store=self.vector_store,
+            graph_store=self.graph if self.enable_graph else None,
+            reranker=self.reranker,
+        )
+
         capture_event("mem0.init", self, {"sync_type": "sync"})
 
     @classmethod
@@ -911,31 +921,14 @@ class Memory(MemoryBase):
             },
         )
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_memories = executor.submit(self._search_vector_store, query, effective_filters, limit, threshold)
-            future_graph_entities = (
-                executor.submit(self.graph.search, query, effective_filters, limit) if self.enable_graph else None
-            )
-
-            concurrent.futures.wait(
-                [future_memories, future_graph_entities] if future_graph_entities else [future_memories]
-            )
-
-            original_memories = future_memories.result()
-            graph_entities = future_graph_entities.result() if future_graph_entities else None
-
-        # Apply reranking if enabled and reranker is available
-        if rerank and self.reranker and original_memories:
-            try:
-                reranked_memories = self.reranker.rerank(query, original_memories, limit)
-                original_memories = reranked_memories
-            except Exception as e:
-                logger.warning(f"Reranking failed, using original results: {e}")
-
-        if self.enable_graph:
-            return {"results": original_memories, "relations": graph_entities}
-
-        return {"results": original_memories}
+        return self.search_engine.search(
+            query=query,
+            filters=effective_filters,
+            limit=limit,
+            threshold=threshold,
+            graph_depth=2,
+            rerank=rerank,
+        )
 
     def _process_metadata_filters(self, metadata_filters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1032,44 +1025,6 @@ class Memory(MemoryBase):
             if value == "*":
                 return True
         return False
-
-    def _search_vector_store(self, query, filters, limit, threshold: Optional[float] = None):
-        embeddings = self.embedding_model.embed(query, "search")
-        memories = self.vector_store.search(query=query, vectors=embeddings, limit=limit, filters=filters)
-
-        promoted_payload_keys = [
-            "user_id",
-            "agent_id",
-            "run_id",
-            "actor_id",
-            "role",
-        ]
-
-        core_and_promoted_keys = {"data", "hash", "created_at", "updated_at", "id", *promoted_payload_keys}
-
-        original_memories = []
-        for mem in memories:
-            memory_item_dict = MemoryItem(
-                id=mem.id,
-                memory=mem.payload.get("data", ""),
-                hash=mem.payload.get("hash"),
-                created_at=_normalize_iso_timestamp_to_utc(mem.payload.get("created_at")),
-                updated_at=_normalize_iso_timestamp_to_utc(mem.payload.get("updated_at")),
-                score=mem.score,
-            ).model_dump()
-
-            for key in promoted_payload_keys:
-                if key in mem.payload:
-                    memory_item_dict[key] = mem.payload[key]
-
-            additional_metadata = {k: v for k, v in mem.payload.items() if k not in core_and_promoted_keys}
-            if additional_metadata:
-                memory_item_dict["metadata"] = additional_metadata
-
-            if threshold is None or mem.score >= threshold:
-                original_memories.append(memory_item_dict)
-
-        return original_memories
 
     def update(self, memory_id, data):
         """

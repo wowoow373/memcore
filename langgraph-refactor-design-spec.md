@@ -30,27 +30,39 @@ Search 是**纯只读**的记忆召回接口，负责回答一个问题："给�
 
 ### Search 的输入
 
+**SearchEngine.search() 签名（已实现）**：
 ```python
-search(query: str, metadata: dict, limit: int, graph_depth: int, rerank: bool)
+search(query: str, filters: dict, limit: int=100, threshold: float=None, graph_depth: int=2, rerank: bool=True)
+```
+
+**Memory.search() 签名（对外接口，未变）**：
+```python
+search(query: str, *, user_id=None, agent_id=None, run_id=None, limit=100, filters=None, threshold=None, rerank=True)
 ```
 
 - `query`：查询文本（Add 调用时会将 messages 拼接为 query）
-- `metadata`：作用域过滤（user_id / agent_id / run_id / 其他自定义 metadata），为日后扩展预留
+- `filters` / `metadata`：作用域过滤（user_id / agent_id / run_id / 其他自定义 metadata），为日后扩展预留
 - `limit`：返回数量上限
-- `graph_depth`：图跨步检索深度（默认 2，0 表示不查图）
+- `graph_depth`：图跨步检索深度（默认 2，0 表示不查图）。⚠️ **当前 `Memory.search()` 未暴露此参数，SearchEngine 内部硬编码为 2**。后续配置化工作（`graph_search_depth` 配置项）时统一暴露
 - `rerank`：是否启用重排序
+- `threshold`：向量相似度阈值，低于此分数的结果被过滤（新增参数，满足生产环境精度控制需求）
 
 ### Search 的输出
 
 ```python
+# 有图存储:
 {
-    "results": [MemoryItem, ...],   # 召回的记忆列表（多种排序结果，让下游决定）
-    "relations": [...]               # 节点关联的完整关系（由 Add 写入时收敛，Search 直接返回）
+    "results": [MemoryItem, ...],   # 召回的记忆列表（向量召回结果，经过去重和可选 rerank）
+    "relations": [...]               # 图遍历得到的关系列表
 }
+
+# 无图存储:
+{"results": [MemoryItem, ...]}
 ```
 
-- `MemoryItem`：包含与去重、存储相关的必要字段（如 id, content, memory_type, score 等），属于易修改结构，按需扩展
-- `relations`：返回节点及其所有关联关系，不做收敛过滤
+- `MemoryItem`：Pydantic v2 模型，字段包括 `id`, `memory`, `hash`, `score`, `created_at`, `updated_at`, `metadata`，以及从 payload 提升的 `user_id`/`agent_id`/`run_id`/`actor_id`/`role`
+- `relations`：返回节点关联关系，每个元素格式为 `{"source": str, "relationship": str, "destination": str}`
+- **实现状态**：✅ Search 部分已完整实现，51 单元测试 + 4 集成测试 + 7 E2E 测试全部通过
 
 ### Search 内部步骤
 
@@ -58,8 +70,8 @@ Search 内部用 LangGraph 编排，但对外暴露的是一个简单方法。�
 
 1. **向量召回**：embedding query → 向量库相似度搜索（召回所有类型的记忆）
 2. **图跨步召回**：提取 query 中的实体 → 从实体出发沿关系链遍历 `graph_depth` 步 → 收集途经的节点和关系
-3. **合并**：向量结果和图结果去重（同一记忆在两种召回中出现时合并）
-4. **重排序**（可选）：reranker 对合并后的结果重排
+3. **合并去重**：按 memory id 对向量结果去重（保留 score 最高的）
+4. **重排序**（可选）：reranker 对向量结果重排，添加 `rerank_score` 字段
 5. **协同召回**可能会需要图数据和向量结果互相帮助召回
 
 ### 图跨步检索的设计
@@ -75,7 +87,9 @@ Search 内部用 LangGraph 编排，但对外暴露的是一个简单方法。�
 
 ---
 
-## Add 流程设计
+## Add 流程设计 ⏳ 待实现
+
+> **当前状态**：Search 部分已完成，Add 部分仍为设计规格，尚未实现。以下设计保持原样，作为 Add Engine 的实施依据。
 
 ### Add 的职责边界
 
@@ -247,13 +261,12 @@ Code Agent Summary 的处理是 Add 流程的一个子分支：
 
 ---
 
-## 配置设计
+## 配置设计 ⏳ 待实现
 
-需要新增的配置项：
+需要新增的配置项（Search 部分硬编码，Add Engine 实现时统一配置化）：
 
-1. **`graph_search_depth`**：Search 的图跨步检索默认深度（默认 2）
+1. **`graph_search_depth`**：Search 的图跨步检索默认深度（当前 SearchEngine 内部硬编码为 2，后续需暴露到 `MemoryConfig`）
 2. **`add_recall_limit`**：Add 调用 Search 时的默认召回数量（默认 10）
-3. **`enable_langgraph`**：LangGraph 编排开关（便于回退调试）
 
 ---
 
@@ -262,6 +275,22 @@ Code Agent Summary 的处理是 Add 流程的一个子分支：
 1. **Search 是 Add 的依赖，不是反过来**：Add 调用 Search，Search 不感知 Add 的存在
 2. **recalled_memories 必须随 Add 返回**：这是"add-with-search-back"的核心语义
 3. **流程记忆融入标准分支**：`memory_type` 只影响"提取内容"的方式，不影响整体"召回→决策→执行"框架
+4. **Summary 图存储必须先 search 后 write**：避免重复节点，支持增量更新
+5. **图跨步深度在 Search 层配置**：Add 调用 Search 时透传，不在 Add 层重复定义
+6. **向量召回高分作为图遍历起点**：Search 的协同召回策略（具体实现内部决定）
+7. **Search 返回多种排序结果**：向量召回和图召回分别返回，不融合排序，让下游（Add 的决策步骤）自行决定如何使用
+
+---
+
+## 实现完成度总结
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| **SearchEngine** | ✅ 已完成 | `search_engine.py` + `test_search_engine.py` + `test_search_engine_e2e.py`。51 单元测试 + 4 集成测试 + 7 E2E 测试全部通过 |
+| **Memory.search() 委托** | ✅ 已完成 | `main.py` 中 `search()` 已委托给 SearchEngine，同步 `_search_vector_store` 已删除 |
+| **Add Engine** | ⏳ 待实现 | 设计规格已就绪，需创建 `add_engine.py` 并将 `Memory.add()` 委托 |
+| **配置项** | ⏳ 待实现 | `graph_search_depth`、`add_recall_limit` 需加入 `MemoryConfig` |
+| **AsyncMemory** | ⏳ 待实现 | 本次未碰，后续参照同步版本改造 |
 4. **Summary 图存储必须先 search 后 write**：避免重复节点，支持增量更新
 5. **图跨步深度在 Search 层配置**：Add 调用 Search 时透传，不在 Add 层重复定义
 6. **向量召回高分作为图遍历起点**：Search 的协同召回策略（具体实现内部决定）

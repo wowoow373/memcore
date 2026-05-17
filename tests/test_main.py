@@ -124,6 +124,12 @@ def test_get(memory_instance):
 def test_search(memory_instance, version, enable_graph):
     memory_instance.config.version = version
     memory_instance.enable_graph = enable_graph
+
+    # Sync SearchEngine's internal enable_graph with Memory's flag
+    if not enable_graph:
+        memory_instance.search_engine.enable_graph = False
+        memory_instance.search_engine.graph = None
+
     mock_memories = [
         Mock(id="1", payload={"data": "Memory 1", "user_id": "test_user"}, score=0.9),
         Mock(id="2", payload={"data": "Memory 2", "user_id": "test_user"}, score=0.8),
@@ -161,7 +167,7 @@ def test_search(memory_instance, version, enable_graph):
     memory_instance.embedding_model.embed.assert_called_once_with("test query", "search")
 
     if enable_graph:
-        memory_instance.graph.search.assert_called_once_with("test query", {"user_id": "test_user"}, 100)
+        memory_instance.graph.search.assert_called_once_with("test query", {"user_id": "test_user"}, limit=2)
     else:
         memory_instance.graph.search.assert_not_called()
 

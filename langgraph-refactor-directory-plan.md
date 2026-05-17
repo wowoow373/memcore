@@ -44,20 +44,23 @@ mem0/memory/
 - `Memory` / `AsyncMemory` 类定义
 - `__init__` 中的组件初始化（embedding_model, vector_store, llm, graph, db, reranker）
 - `search()` / `add()` / `get()` / `get_all()` / `update()` / `delete()` / `history()` / `reset()` 方法签名
-- `search()` 和 `add()` 改为委托给 Engine，自身只保留参数校验和结果组装
+- `search()` 已委托给 SearchEngine，自身只保留参数校验
+- `add()` 仍为旧实现，待 Add Engine 完成后委托
 
 其余内容视情况保留，最后删除不需要的方法
 
-### search_engine.py
+### search_engine.py ✅ 已完成
 
 职责：**Search 统一召回引擎**。向量召回 + 图召回 + 合并去重 + rerank + 格式化。LangGraph 状态机收在本文件内部，对外暴露一个简单的 `search()` 方法。
 
 内部 LangGraph 状态机：
-- 节点：embed → vector_search → graph_search → merge_dedup → rerank
+- 节点：embed → vector_search → graph_search → merge → rerank → build_response
 - 条件：graph_depth > 0 时走 graph_search，否则跳过；rerank=True 时走 rerank，否则结束
 - 对外无感知，编译后的图在 Engine 初始化时生成
 
-### add_engine.py
+测试覆盖：51 个单元测试 + 4 个 Memory 集成测试 + 7 个 E2E 测试全部通过。
+
+### add_engine.py ⏳ 待实现
 
 职责：**Add 写入引擎**。标准记忆、流程记忆、Code Agent Summary 均走 Add 流程的不同分支。LangGraph 状态机收在本文件内部，对外暴露一个简单的 `add()` 方法。
 
@@ -76,15 +79,16 @@ mem0/memory/
 ## main.py 与 Engine 的调用关系
 
 ```
-Memory.search()
+Memory.search() ✅ 已委托
     └── search_engine.search()
             ├── embedding_model.embed()
             ├── vector_store.search()
             ├── graph.search() 
             └── reranker.rerank() (可选)
 
-Memory.add()
-    └── add_engine.add()  (内部 LangGraph 编排)
+Memory.add() ⏳ 仍为旧实现，待 Add Engine
+    └── (当前) main.py 内联逻辑
+    └── (未来) add_engine.add()  (内部 LangGraph 编排)
             ├── search_engine.search()  (召回已有记忆)
             ├── llm.generate_response()  (提取 / 决策)
             ├── vector_store.insert/update/delete()
@@ -97,9 +101,9 @@ Memory.add()
 
 | 文件 | 改动 |
 |------|------|
-| `memory/main.py` | 大改。删除 `_search_vector_store`、`_add_to_vector_store`、`_add_to_graph`、`_create_procedural_memory` 等方法的具体逻辑，改为初始化 Engine 并委托调用。保留接口签名、参数校验、底层存储操作方法、工具函数。 |
-| `memory/search_engine.py` | 新增。含 Search 召回逻辑 + 内部 LangGraph 状态机。 |
-| `memory/add_engine.py` | 新增。含 Add 写入逻辑（标准 + 流程 + Summary）+ 内部 LangGraph 状态机。 |
+| `memory/main.py` | 部分改动。`search()` 已委托给 SearchEngine；同步 `_search_vector_store` 已删除。`add()` 仍为旧实现，待 Add Engine 完成后委托。保留接口签名、参数校验、底层存储操作方法、工具函数。 |
+| `memory/search_engine.py` | ✅ 新增。含 Search 召回逻辑 + 内部 LangGraph 状态机。51 单元测试 + 4 集成测试 + 7 E2E 测试全部通过。 |
+| `memory/add_engine.py` | ⏳ 新增（待实现）。含 Add 写入逻辑（标准 + 流程 + Summary）+ 内部 LangGraph 状态机。 |
 | `memory/base.py` | 理论上不动 |
 | `memory/storage.py` | 理论上不动 |
 | `memory/telemetry.py` | 理论上不动 |

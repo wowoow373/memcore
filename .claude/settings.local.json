@@ -11,7 +11,13 @@
       "Bash(conda info *)",
       "Bash(conda run *)",
       "Bash(python -m py_compile mem0/memory/main.py)",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('mem0/memory/main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('mem0/memory/main.py'\\).read\\(\\)\\); print\\('Syntax OK'\\)\")",
+      "Bash(python -c \"import langgraph; print\\(langgraph.__version__\\)\")",
+      "Bash(pip show *)",
+      "Bash(python -c \"import langgraph; print\\('langgraph ok'\\)\")",
+      "Bash(python -m pytest tests/memory/test_search_engine.py -v --tb=short)",
+      "Bash(grep -v '^$')",
+      "Bash(git add *)"
     ]
   }
 }
