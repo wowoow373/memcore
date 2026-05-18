@@ -313,6 +313,17 @@ class Memory(MemoryBase):
             llm=self.llm,
         )
 
+        # Initialize AddEngine for write orchestration
+        from mem0.memory.add_engine import AddEngine
+        self.add_engine = AddEngine(
+            embedding_model=self.embedding_model,
+            vector_store=self.vector_store,
+            llm=self.llm,
+            db=self.db,
+            search_engine=self.search_engine,
+            graph=self.graph if self.enable_graph else None,
+        )
+
         capture_event("mem0.init", self, {"sync_type": "sync"})
 
     @classmethod
@@ -392,9 +403,8 @@ class Memory(MemoryBase):
             memory_type (str, optional): Specifies the type of memory. Currently, only
                 `MemoryType.PROCEDURAL.value` ("procedural_memory") is explicitly handled for
                 creating procedural memories (typically requires 'agent_id'). Otherwise, memories
-                are treated as general conversational/factual memories.memory_type (str, optional): Type of memory to create. Defaults to None. By default, it creates the short term memories and long term (semantic and episodic) memories. Pass "procedural_memory" to create procedural memories.
+                are treated as general conversational/factual memories.
             prompt (str, optional): Prompt to use for the memory creation. Defaults to None.
-
 
         Returns:
             dict: A dictionary containing the result of the memory addition operation, typically
@@ -441,6 +451,7 @@ class Memory(MemoryBase):
             )
 
         if agent_id is not None and memory_type == MemoryType.PROCEDURAL.value:
+            # TODO: procedural_memory will be integrated into AddEngine in a future iteration
             results = self._create_procedural_memory(messages, metadata=processed_metadata, prompt=prompt)
             return results
 
@@ -449,256 +460,22 @@ class Memory(MemoryBase):
         else:
             messages = parse_vision_messages(messages)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future1 = executor.submit(self._add_to_vector_store, messages, processed_metadata, effective_filters, infer)
-            future2 = executor.submit(self._add_to_graph, messages, effective_filters)
-
-            concurrent.futures.wait([future1, future2])
-
-            vector_store_result = future1.result()
-            graph_result = future2.result()
-
-        if self.enable_graph:
-            return {
-                "results": vector_store_result,
-                "relations": graph_result,
-            }
-
-        return {"results": vector_store_result}
-
-    def _add_to_vector_store(self, messages, metadata, filters, infer):
-        if not infer:
-            returned_memories = []
-            for message_dict in messages:
-                if (
-                    not isinstance(message_dict, dict)
-                    or message_dict.get("role") is None
-                    or message_dict.get("content") is None
-                ):
-                    logger.warning(f"Skipping invalid message format: {message_dict}")
-                    continue
-
-                if message_dict["role"] == "system":
-                    continue
-
-                per_msg_meta = deepcopy(metadata)
-                per_msg_meta["role"] = message_dict["role"]
-
-                actor_name = message_dict.get("name")
-                if actor_name:
-                    per_msg_meta["actor_id"] = actor_name
-
-                msg_content = message_dict["content"]
-                msg_embeddings = self.embedding_model.embed(msg_content, "add")
-                mem_id = self._create_memory(msg_content, msg_embeddings, per_msg_meta)
-
-                returned_memories.append(
-                    {
-                        "id": mem_id,
-                        "memory": msg_content,
-                        "event": "ADD",
-                        "actor_id": actor_name if actor_name else None,
-                        "role": message_dict["role"],
-                    }
-                )
-            return returned_memories
-
-        parsed_messages = parse_messages(messages)
-
-        if self.config.custom_fact_extraction_prompt:
-            system_prompt = self.config.custom_fact_extraction_prompt
-            user_prompt = f"Input:\n{parsed_messages}"
-        else:
-            # Determine if this should use agent memory extraction based on agent_id presence
-            # and role types in messages
-            is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
-            system_prompt, user_prompt = get_fact_retrieval_messages(parsed_messages, is_agent_memory)
-
-        # Ensure 'json' appears in prompts for json_object response format compatibility
-        system_prompt, user_prompt = ensure_json_instruction(system_prompt, user_prompt)
-
-        response = self.llm.generate_response(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
+        # Delegate core write logic to AddEngine
+        result = self.add_engine.add(
+            messages=messages,
+            metadata=processed_metadata,
+            filters=effective_filters,
+            infer=infer,
         )
 
-        try:
-            response = remove_code_blocks(response)
-            if not response.strip():
-                new_retrieved_facts = []
-            else:
-                try:
-                    # First try direct JSON parsing
-                    new_retrieved_facts = json.loads(response, strict=False)["facts"]
-                except json.JSONDecodeError:
-                    # Try extracting JSON from response using built-in function
-                    extracted_json = extract_json(response)
-                    new_retrieved_facts = json.loads(extracted_json, strict=False)["facts"]
-                new_retrieved_facts = normalize_facts(new_retrieved_facts)
-        except Exception as e:
-            logger.error(f"Error in new_retrieved_facts: {e}")
-            new_retrieved_facts = []
-
-        if not new_retrieved_facts:
-            logger.debug("No new facts retrieved from input. Skipping memory update LLM call.")
-
-        retrieved_old_memory = []
-        new_message_embeddings = {}
-        # Search for existing memories using the provided session identifiers
-        # Use all available session identifiers for accurate memory retrieval
-        search_filters = {}
-        if filters.get("user_id"):
-            search_filters["user_id"] = filters["user_id"]
-        if filters.get("agent_id"):
-            search_filters["agent_id"] = filters["agent_id"]
-        if filters.get("run_id"):
-            search_filters["run_id"] = filters["run_id"]
-        for new_mem in new_retrieved_facts:
-            messages_embeddings = self.embedding_model.embed(new_mem, "add")
-            new_message_embeddings[new_mem] = messages_embeddings
-            existing_memories = self.vector_store.search(
-                query=new_mem,
-                vectors=messages_embeddings,
-                limit=5,
-                filters=search_filters,
-            )
-            for mem in existing_memories:
-                retrieved_old_memory.append({"id": mem.id, "text": mem.payload.get("data", "")})
-
-        unique_data = {}
-        for item in retrieved_old_memory:
-            unique_data[item["id"]] = item
-        retrieved_old_memory = list(unique_data.values())
-        logger.info(f"Total existing memories: {len(retrieved_old_memory)}")
-
-        # mapping UUIDs with integers for handling UUID hallucinations
-        temp_uuid_mapping = {}
-        for idx, item in enumerate(retrieved_old_memory):
-            temp_uuid_mapping[str(idx)] = item["id"]
-            retrieved_old_memory[idx]["id"] = str(idx)
-
-        if new_retrieved_facts:
-            function_calling_prompt = get_update_memory_messages(
-                retrieved_old_memory, new_retrieved_facts, self.config.custom_update_memory_prompt
-            )
-
-            try:
-                response: str = self.llm.generate_response(
-                    messages=[{"role": "user", "content": function_calling_prompt}],
-                    response_format={"type": "json_object"},
-                )
-            except Exception as e:
-                logger.error(f"Error in new memory actions response: {e}")
-                response = ""
-
-            try:
-                if not response or not response.strip():
-                    logger.warning("Empty response from LLM, no memories to extract")
-                    new_memories_with_actions = {}
-                else:
-                    response = remove_code_blocks(response)
-                    new_memories_with_actions = json.loads(response, strict=False)
-            except Exception as e:
-                logger.error(f"Invalid JSON response: {e}")
-                new_memories_with_actions = {}
-        else:
-            new_memories_with_actions = {}
-
-        returned_memories = []
-        try:
-            for resp in new_memories_with_actions.get("memory", []):
-                logger.info(resp)
-                try:
-                    action_text = resp.get("text")
-                    if not action_text:
-                        logger.info("Skipping memory entry because of empty `text` field.")
-                        continue
-
-                    event_type = resp.get("event")
-                    if event_type == "ADD":
-                        memory_id = self._create_memory(
-                            data=action_text,
-                            existing_embeddings=new_message_embeddings,
-                            metadata=deepcopy(metadata),
-                        )
-                        returned_memories.append({"id": memory_id, "memory": action_text, "event": event_type})
-                    elif event_type == "UPDATE":
-                        self._update_memory(
-                            memory_id=temp_uuid_mapping[resp.get("id")],
-                            data=action_text,
-                            existing_embeddings=new_message_embeddings,
-                            metadata=deepcopy(metadata),
-                        )
-                        returned_memories.append(
-                            {
-                                "id": temp_uuid_mapping[resp.get("id")],
-                                "memory": action_text,
-                                "event": event_type,
-                                "previous_memory": resp.get("old_memory"),
-                            }
-                        )
-                    elif event_type == "DELETE":
-                        self._delete_memory(memory_id=temp_uuid_mapping[resp.get("id")])
-                        returned_memories.append(
-                            {
-                                "id": temp_uuid_mapping[resp.get("id")],
-                                "memory": action_text,
-                                "event": event_type,
-                            }
-                        )
-                    elif event_type == "NONE":
-                        # Even if content doesn't need updating, update session IDs if provided
-                        memory_id = temp_uuid_mapping.get(resp.get("id"))
-                        if memory_id and (metadata.get("agent_id") or metadata.get("run_id")):
-                            # Update only the session identifiers, keep content the same
-                            existing_memory = self.vector_store.get(vector_id=memory_id)
-                            if existing_memory is None:
-                                logger.warning(f"Memory {memory_id} not found for session ID update, skipping")
-                                continue
-                            updated_metadata = deepcopy(existing_memory.payload)
-                            if metadata.get("agent_id"):
-                                updated_metadata["agent_id"] = metadata["agent_id"]
-                            if metadata.get("run_id"):
-                                updated_metadata["run_id"] = metadata["run_id"]
-                            updated_metadata["created_at"] = _normalize_iso_timestamp_to_utc(
-                                updated_metadata.get("created_at")
-                            )
-                            updated_metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-                            self.vector_store.update(
-                                vector_id=memory_id,
-                                vector=None,  # Keep same embeddings
-                                payload=updated_metadata,
-                            )
-                            logger.info(f"Updated session IDs for memory {memory_id}")
-                        else:
-                            logger.info("NOOP for Memory.")
-                except Exception as e:
-                    logger.error(f"Error processing memory action: {resp}, Error: {e}")
-        except Exception as e:
-            logger.error(f"Error iterating new_memories_with_actions: {e}")
-
-        keys, encoded_ids = process_telemetry_filters(filters)
+        keys, encoded_ids = process_telemetry_filters(effective_filters)
         capture_event(
             "mem0.add",
             self,
             {"version": self.api_version, "keys": keys, "encoded_ids": encoded_ids, "sync_type": "sync"},
         )
-        return returned_memories
 
-    def _add_to_graph(self, messages, filters):
-        added_entities = []
-        if self.enable_graph:
-            if filters.get("user_id") is None:
-                filters["user_id"] = "user"
-
-            data = "\n".join([msg["content"] for msg in messages if "content" in msg and msg["role"] != "system"])
-            added_entities = self.graph.add(data, filters)
-
-        return added_entities
+        return result
 
     def get(self, memory_id):
         """

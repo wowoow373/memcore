@@ -27,6 +27,7 @@ Search 是**纯只读**的记忆召回接口，负责回答一个问题："给�
 - 从向量数据库召回语义相似的记忆（不区分记忆类型，procedural/semantic/episodic 一视同仁）
 - 从图数据库按可配置深度进行跨步关系遍历召回
 - 将多源召回结果合并去重后返回
+- add直接根据search返回的结果计划后写入，及search返回的结果一定是记忆中存在的，不需要再次判断
 
 ### Search 的输入
 
@@ -138,10 +139,10 @@ add(
 2. **分支判断**：
    - 如果 `infer=False` → 直接存储分支（不走 LLM，每条 message 直接存）
    - 否则 → 标准分支（走下面的步骤）
-3. **召回已有记忆**（标准分支）：将 messages 拼接为 query，调用 **Search** 召回相关记忆（**包含 procedural memories**）
-4. **提取内容**（标准分支，infer=True）：
+3. **提取内容**（标准分支，infer=True）：
    - 如果 `memory_type != "procedural_memory"` → LLM 从 messages 中提取结构化 facts 列表
    - 如果 `memory_type == "procedural_memory"` → 对summary流程进行切片-总结等预处理
+4. **召回已有记忆**（标准分支）：将 messages 拼接为 query，调用 **Search** 召回相关记忆（**包含 procedural memories**）
 5. **决策**：
    - 如果 `memory_type != "procedural_memory"` → LLM 基于提取的 facts + 召回的已有记忆，决定每个 fact 是 ADD / UPDATE / DELETE / NONE
    - 如果 `memory_type == "procedural_memory"` → LLM 基于当前流程 + 召回的已有 procedural memories，决定是 ADD / UPDATE / DELETE /NONE
