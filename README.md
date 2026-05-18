@@ -3,6 +3,9 @@
     <img src="docs/images/banner-sm.png" width="800px" alt="Mem0 - The Memory Layer for Personalized AI">
   </a>
 </p>
+
+> **Fork Note**: This repository is based on [mem0ai/mem0](https://github.com/mem0ai/mem0) with ongoing refactoring work. See [Modifications](#modifications) below for details.
+
 <p align="center" style="display: flex; justify-content: center; gap: 20px; align-items: center;">
   <a href="https://trendshift.io/repositories/11194" target="blank">
     <img src="https://trendshift.io/api/badge/repositories/11194" alt="mem0ai%2Fmem0 | Trendshift" width="250" height="55"/>
@@ -146,6 +149,16 @@ For detailed integration steps, see the [Quickstart](https://docs.mem0.ai/quicks
 - **Browser Extension**: Store memories across ChatGPT, Perplexity, and Claude ([Chrome Extension](https://chromewebstore.google.com/detail/onihkkbipkfeijkadecaafbgagkhglop?utm_source=item-share-cb))
 - **Langgraph Support**: Build a customer bot with Langgraph + Mem0 ([Guide](https://docs.mem0.ai/integrations/langgraph))
 - **CrewAI Integration**: Tailor CrewAI outputs with Mem0 ([Example](https://docs.mem0.ai/integrations/crewai))
+
+## 🛠️ Modifications
+
+This fork includes the following ongoing refactoring work:
+
+- **SearchEngine Extraction** (`mem0/memory/search_engine.py`): Unified vector + graph search with optional reranking, refactored from `Memory.search()`.
+- **LangGraph Refactor**: The `Memory.add()` flow is being restructured as a LangGraph state machine (design docs: [`langgraph-refactor-design-spec.md`](langgraph-refactor-design-spec.md), [`langgraph-refactor-directory-plan.md`](langgraph-refactor-directory-plan.md)).
+- See [`search-engine-implementation-plan.md`](search-engine-implementation-plan.md) for detailed implementation plans.
+
+Original project: [mem0ai/mem0](https://github.com/mem0ai/mem0)
 
 ## 📚 Documentation & Support
 
