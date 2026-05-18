@@ -310,6 +310,7 @@ class Memory(MemoryBase):
             vector_store=self.vector_store,
             graph_store=self.graph if self.enable_graph else None,
             reranker=self.reranker,
+            llm=self.llm,
         )
 
         capture_event("mem0.init", self, {"sync_type": "sync"})
@@ -1313,6 +1314,16 @@ class AsyncMemory(MemoryBase):
         else:
             self.graph = None
 
+        # Initialize SearchEngine for unified recall
+        from mem0.memory.search_engine import SearchEngine
+        self.search_engine = SearchEngine(
+            embedding_model=self.embedding_model,
+            vector_store=self.vector_store,
+            graph_store=self.graph if self.enable_graph else None,
+            reranker=self.reranker,
+            llm=self.llm,
+        )
+
         if MEM0_TELEMETRY:
             telemetry_config = _safe_deepcopy_config(self.config.vector_store.config)
             telemetry_config.collection_name = "mem0migrations"
@@ -1931,36 +1942,15 @@ class AsyncMemory(MemoryBase):
             },
         )
 
-        vector_store_task = asyncio.create_task(self._search_vector_store(query, effective_filters, limit, threshold))
-
-        graph_task = None
-        if self.enable_graph:
-            if hasattr(self.graph.search, "__await__"):  # Check if graph search is async
-                graph_task = asyncio.create_task(self.graph.search(query, effective_filters, limit))
-            else:
-                graph_task = asyncio.create_task(asyncio.to_thread(self.graph.search, query, effective_filters, limit))
-
-        if graph_task:
-            original_memories, graph_entities = await asyncio.gather(vector_store_task, graph_task)
-        else:
-            original_memories = await vector_store_task
-            graph_entities = None
-
-        # Apply reranking if enabled and reranker is available
-        if rerank and self.reranker and original_memories:
-            try:
-                # Run reranking in thread pool to avoid blocking async loop
-                reranked_memories = await asyncio.to_thread(
-                    self.reranker.rerank, query, original_memories, limit
-                )
-                original_memories = reranked_memories
-            except Exception as e:
-                logger.warning(f"Reranking failed, using original results: {e}")
-
-        if self.enable_graph:
-            return {"results": original_memories, "relations": graph_entities}
-
-        return {"results": original_memories}
+        return await asyncio.to_thread(
+            self.search_engine.search,
+            query=query,
+            filters=effective_filters,
+            limit=limit,
+            threshold=threshold,
+            graph_depth=2,
+            rerank=rerank,
+        )
 
     def _process_metadata_filters(self, metadata_filters: Dict[str, Any]) -> Dict[str, Any]:
         """

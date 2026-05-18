@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TypedDict
 
 from mem0.configs.base import MemoryItem
+from mem0.graphs.tools import EXTRACT_ENTITIES_STRUCT_TOOL, EXTRACT_ENTITIES_TOOL
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,13 @@ class SearchEngine:
         vector_store: Any,
         graph_store: Optional[Any] = None,
         reranker: Optional[Any] = None,
+        llm: Optional[Any] = None,
     ):
         self.embedding_model = embedding_model
         self.vector_store = vector_store
         self.graph = graph_store
         self.reranker = reranker
+        self.llm = llm
         self.enable_graph = graph_store is not None
 
         from langgraph.graph import END, START, StateGraph
@@ -199,12 +202,70 @@ class SearchEngine:
 
         return original_memories
 
+    def _extract_nodes(self, query: str, filters: dict) -> List[str]:
+        """Extract entity node names from query text using LLM tool-call.
+
+        Mirrors the logic previously in MemoryGraph._retrieve_nodes_from_data().
+        """
+        if self.llm is None:
+            return []
+
+        # Determine whether to use structured tool format based on LLM class name.
+        llm_cls_name = type(self.llm).__name__.lower()
+        if "structured" in llm_cls_name:
+            _tools = [EXTRACT_ENTITIES_STRUCT_TOOL]
+        else:
+            _tools = [EXTRACT_ENTITIES_TOOL]
+
+        search_results = self.llm.generate_response(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a smart assistant who understands entities and their types in a given text. "
+                        f"If user message contains self reference such as 'I', 'me', 'my' etc. then use {filters.get('user_id', 'user')} as the source entity. "
+                        "Extract all the entities from the text. ***DO NOT*** answer the question itself if the given text is a question."
+                    ),
+                },
+                {"role": "user", "content": query},
+            ],
+            tools=_tools,
+        )
+
+        entity_type_map = {}
+        try:
+            for tool_call in search_results.get("tool_calls", []):
+                if tool_call.get("name") != "extract_entities":
+                    continue
+                for item in tool_call.get("arguments", {}).get("entities", []):
+                    entity_type_map[item["entity"]] = item.get("entity_type", "")
+        except Exception as e:
+            logger.warning(f"Error extracting nodes from query: {e}")
+
+        # Normalize: lower + space → underscore
+        nodes = [k.lower().replace(" ", "_") for k in entity_type_map.keys()]
+        return nodes
+
     def _search_graph(
         self, query: str, filters: dict, graph_depth: int
     ) -> List[dict]:
         """Search graph store for related entities up to ``graph_depth`` hops."""
         if graph_depth <= 0 or not self.enable_graph:
             return []
+
+        # Prefer new search_nodes interface (Neo4j)
+        if hasattr(self.graph, "search_nodes"):
+            if self.llm is not None:
+                node_names = self._extract_nodes(query, filters)
+            else:
+                # Fallback: simple split when no LLM available
+                if "," in query:
+                    node_names = [n.strip() for n in query.split(",") if n.strip()]
+                else:
+                    node_names = [query.strip()]
+            return self.graph.search_nodes(node_names, filters, depth=graph_depth)
+
+        # Legacy fallback for other graph stores
         return self.graph.search(query, filters, limit=graph_depth)
 
     @staticmethod

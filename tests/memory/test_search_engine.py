@@ -324,8 +324,9 @@ class TestGraphSearchNode:
         assert results == []
         mock_graph.search.assert_not_called()
 
-    def test_graph_search_with_depth(self):
-        mock_graph = MagicMock()
+    def test_graph_search_with_depth_legacy(self):
+        """Legacy graph store without search_nodes uses graph.search()."""
+        mock_graph = MagicMock(spec=["search"])
         mock_graph.search.return_value = [
             {"source": "Alice", "relationship": "KNOWS", "destination": "Bob"}
         ]
@@ -337,8 +338,9 @@ class TestGraphSearchNode:
         assert results[0]["source"] == "Alice"
         mock_graph.search.assert_called_once_with("test", {"user_id": "u1"}, limit=2)
 
-    def test_graph_search_passes_depth_as_limit(self):
-        mock_graph = MagicMock()
+    def test_graph_search_passes_depth_as_limit_legacy(self):
+        """Legacy graph store passes depth as limit."""
+        mock_graph = MagicMock(spec=["search"])
         mock_graph.search.return_value = []
         engine = SearchEngine(MagicMock(), MagicMock(), graph_store=mock_graph)
 
@@ -346,13 +348,130 @@ class TestGraphSearchNode:
 
         mock_graph.search.assert_called_once_with("test", {"user_id": "u1"}, limit=5)
 
-    def test_graph_search_propagates_error(self):
-        mock_graph = MagicMock()
+    def test_graph_search_propagates_error_legacy(self):
+        """Legacy graph store propagates errors from graph.search()."""
+        mock_graph = MagicMock(spec=["search"])
         mock_graph.search.side_effect = RuntimeError("graph error")
         engine = SearchEngine(MagicMock(), MagicMock(), graph_store=mock_graph)
 
         with pytest.raises(RuntimeError, match="graph error"):
             engine._search_graph("test", {"user_id": "u1"}, graph_depth=2)
+
+    def test_graph_search_with_search_nodes(self):
+        """Neo4j graph store with search_nodes uses the new path."""
+        mock_graph = MagicMock(spec=["search", "search_nodes"])
+        mock_graph.search_nodes.return_value = [
+            {"source": "Alice", "relationship": "KNOWS", "destination": "Bob"}
+        ]
+        engine = SearchEngine(MagicMock(), MagicMock(), graph_store=mock_graph)
+
+        results = engine._search_graph("test", {"user_id": "u1"}, graph_depth=2)
+
+        assert len(results) == 1
+        assert results[0]["source"] == "Alice"
+        mock_graph.search_nodes.assert_called_once()
+        call_args = mock_graph.search_nodes.call_args
+        assert call_args[0][0] == ["test"]  # node_names
+        assert call_args[0][1] == {"user_id": "u1"}  # filters
+        assert call_args[1]["depth"] == 2
+
+    def test_graph_search_search_nodes_no_llm_fallback(self):
+        """When llm is None, search_nodes falls back to splitting query."""
+        mock_graph = MagicMock(spec=["search", "search_nodes"])
+        mock_graph.search_nodes.return_value = []
+        engine = SearchEngine(MagicMock(), MagicMock(), graph_store=mock_graph, llm=None)
+
+        engine._search_graph("alice, bob", {"user_id": "u1"}, graph_depth=2)
+
+        call_args = mock_graph.search_nodes.call_args
+        assert call_args[0][0] == ["alice", "bob"]
+
+    def test_graph_search_search_nodes_propagates_error(self):
+        """Errors from search_nodes are propagated."""
+        mock_graph = MagicMock(spec=["search", "search_nodes"])
+        mock_graph.search_nodes.side_effect = RuntimeError("search_nodes error")
+        engine = SearchEngine(MagicMock(), MagicMock(), graph_store=mock_graph)
+
+        with pytest.raises(RuntimeError, match="search_nodes error"):
+            engine._search_graph("test", {"user_id": "u1"}, graph_depth=2)
+
+
+class TestExtractNodes:
+    """Tests for SearchEngine._extract_nodes with mocked LLM."""
+
+    def test_extract_nodes_success(self):
+        mock_llm = MagicMock()
+        mock_llm.generate_response.return_value = {
+            "tool_calls": [
+                {
+                    "name": "extract_entities",
+                    "arguments": {
+                        "entities": [
+                            {"entity": "Alice", "entity_type": "person"},
+                            {"entity": "Bob Smith", "entity_type": "person"},
+                        ]
+                    },
+                }
+            ]
+        }
+        engine = SearchEngine(MagicMock(), MagicMock(), llm=mock_llm)
+
+        nodes = engine._extract_nodes("Alice and Bob Smith are friends", {"user_id": "u1"})
+
+        assert nodes == ["alice", "bob_smith"]
+        mock_llm.generate_response.assert_called_once()
+        call_messages = mock_llm.generate_response.call_args[1]["messages"]
+        assert "u1" in call_messages[0]["content"]
+
+    def test_extract_nodes_no_llm_returns_empty(self):
+        engine = SearchEngine(MagicMock(), MagicMock(), llm=None)
+
+        nodes = engine._extract_nodes("test", {"user_id": "u1"})
+
+        assert nodes == []
+
+    def test_extract_nodes_ignores_non_extract_entities_tool(self):
+        mock_llm = MagicMock()
+        mock_llm.generate_response.return_value = {
+            "tool_calls": [
+                {"name": "other_tool", "arguments": {"entities": [{"entity": "X", "entity_type": "t"}]}}
+            ]
+        }
+        engine = SearchEngine(MagicMock(), MagicMock(), llm=mock_llm)
+
+        nodes = engine._extract_nodes("test", {"user_id": "u1"})
+
+        assert nodes == []
+
+    def test_extract_nodes_handles_exception_gracefully(self):
+        mock_llm = MagicMock()
+        mock_llm.generate_response.return_value = {"tool_calls": "invalid"}
+        engine = SearchEngine(MagicMock(), MagicMock(), llm=mock_llm)
+
+        nodes = engine._extract_nodes("test", {"user_id": "u1"})
+
+        assert nodes == []
+
+    def test_extract_nodes_structured_tool_format(self):
+        """When LLM class name contains 'structured', use structured tool."""
+        mock_llm = MagicMock()
+        mock_llm.__class__.__name__ = "OpenAIStructuredLLM"
+        mock_llm.generate_response.return_value = {
+            "tool_calls": [
+                {
+                    "name": "extract_entities",
+                    "arguments": {"entities": [{"entity": "Carol", "entity_type": "person"}]},
+                }
+            ]
+        }
+        engine = SearchEngine(MagicMock(), MagicMock(), llm=mock_llm)
+
+        nodes = engine._extract_nodes("Carol is here", {"user_id": "u1"})
+
+        assert nodes == ["carol"]
+        tools_arg = mock_llm.generate_response.call_args[1]["tools"]
+        assert tools_arg[0]["function"]["name"] == "extract_entities"
+        assert tools_arg[0]["function"].get("strict") is True
 
 
 class TestMergeResultsNode:
@@ -618,8 +737,8 @@ class TestSearchEntryPoint:
                 payload={"data": "Test memory", "hash": "h1"},
             )
         ]
-        mock_graph = MagicMock()
-        mock_graph.search.return_value = [
+        mock_graph = MagicMock(spec=["search", "search_nodes"])
+        mock_graph.search_nodes.return_value = [
             {"source": "A", "relationship": "r", "destination": "B"}
         ]
         mock_reranker = MagicMock()
@@ -772,7 +891,8 @@ class TestMemorySearchIntegration:
                 payload={"data": "Memory with graph", "hash": "h1", "user_id": "u1"},
             )
         ])
-        memory.graph.search = MagicMock(return_value=[
+        # MemoryGraph mock has search_nodes (new interface)
+        memory.graph.search_nodes = MagicMock(return_value=[
             {"source": "Alice", "relationship": "KNOWS", "destination": "Bob"}
         ])
 

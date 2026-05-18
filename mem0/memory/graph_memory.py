@@ -100,87 +100,32 @@ class MemoryGraph:
 
         return {"deleted_entities": deleted_entities, "added_entities": added_entities}
 
-    def search(self, query, filters, limit=100):
-        """Search the graph by starting from nodes matching the query, then traversing
-        outward up to `limit` hops and reranking the collected relations with BM25.
-
-        NOTE on parameter semantics:
-            The `limit` parameter controls **graph traversal depth**, not result count.
-            `depth=limit` is passed to `_search_graph_db_by_depth`, and `max_results`
-            is derived as `depth * 20`.  Callers from `Memory.search()` pass their
-            vector `limit` here, so the two subsystems share one parameter even though
-            the semantics differ.
-
-        Flow:
-            1. Extract entity nodes from the query text (via `_retrieve_nodes_from_data`).
-            2. Parse raw query into node names (comma-separated or single value).
-            3. Deduplicate and normalize (`lower`, spaces → underscores).
-            4. Depth-traverse from those start nodes in Neo4j.
-            5. Rerank the returned relations with BM25 against the query tokens.
+    def search_nodes(self, node_names, filters, depth=2, limit=100):
+        """Pure graph traversal from given node names.
 
         Args:
-            query (str | list[str]): Fact text or node name(s) to search from.
-            filters (dict): Scope filters; must contain at least `user_id`.
-            limit (int): **Traversal depth** (hops) in the graph.  Defaults to 100.
+            node_names: Pre-extracted node names to start traversal from.
+            filters: Scope filters (user_id, agent_id, run_id).
+            depth: Traversal depth (hops).
+            limit: Max number of relations to return.
 
         Returns:
-            list[dict]: Reranked relations, each with keys:
-                - "source"        : str, start node name
-                - "relationship"  : str, edge type
-                - "destination"   : str, end node name
-
-        TODO (分层重构):
-            GraphStore 层直接耦合了 LLM 调用和查询解析，职责边界混乱。
-
-            当前问题:
-                1. MemoryGraph 同时持有 llm 实例 + 执行 Cypher 查询 + 做 BM25
-                   重排序，一个类横跨了 NLP、图存储、检索三个领域。
-                2. search() 内部调用 _retrieve_nodes_from_data() → llm.generate_response()，
-                   把"自然语言理解"和"图存储检索"硬耦合在一起。
-                3. 调用方无法跳过 LLM 实体提取，也无法替换提取策略
-                   (如用本地 NER 模型替代 LLM)。
-
-            重构方向:
-                - GraphStore 层: 只保留纯图操作 (merge/traverse/delete)，
-                  移除 llm 依赖，search() 直接接收 list[str] 节点名。
-                - EntityExtractor 层: 独立组件，负责 extract_entities /
-                  extract_relations，可被本地模型或 LLM 实现。
-                - Memory 编排层: 决定什么时候调 LLM 提取、什么时候直接
-                  传节点名给 GraphStore.traverse()。
-
-            目标: GraphStore 只懂 Cypher，不懂自然语言；LLM 提取在调用方
-            (Memory 或独立 Service) 中完成，通过 list[str] 传入。
+            list[dict]: Relations with keys source/relationship/destination.
         """
         try:
-            depth = int(limit)
+            depth = int(depth)
         except (TypeError, ValueError):
             depth = 1
         if depth <= 0:
             return []
         max_results = depth * 20
 
-        # 1. Extract candidate start nodes from the query via LLM/entity extraction.
-        extracted_nodes = []
-        if isinstance(query, str):
-            entity_type_map = self._retrieve_nodes_from_data(query, filters)
-            extracted_nodes = list(entity_type_map.keys())
-
-        # 2. Fallback: parse the raw query string (or list) into node names.
-        if isinstance(query, (list, tuple, set)):
-            parsed_nodes = [str(node).strip() for node in query if str(node).strip()]
-        elif isinstance(query, str):
-            split_nodes = query.split(",") if "," in query else [query]
-            parsed_nodes = [node.strip() for node in split_nodes if node.strip()]
-        else:
-            parsed_nodes = [str(query).strip()] if str(query).strip() else []
-
-        # 3. Deduplicate while preserving extraction-first order.
-        node_list = list(dict.fromkeys(extracted_nodes + parsed_nodes))
-        node_list = [node.lower().replace(" ", "_") for node in node_list]
+        # Normalize node names.
+        node_list = [str(node).strip().lower().replace(" ", "_") for node in node_names if str(node).strip()]
         if not node_list:
             return []
 
-        # 4. Traverse the graph from the resolved start nodes.
+        # Traverse the graph from the resolved start nodes.
         search_output = self._search_graph_db_by_depth(
             node_list=node_list,
             filters=filters,
@@ -191,25 +136,46 @@ class MemoryGraph:
         if not search_output:
             return []
 
-        # 5. Rerank collected relations with BM25.
-        search_outputs_sequence = [
-            [item["source"], item["relationship"], item["destination"]] for item in search_output
-        ]
-        bm25 = BM25Okapi(search_outputs_sequence)
-
-        if isinstance(query, str) and query.strip():
-            tokenized_query = query.split(" ")
-        else:
-            tokenized_query = " ".join(node_list).split(" ")
-        reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=min(max_results, len(search_outputs_sequence)))
-
         search_results = []
-        for item in reranked_results:
-            search_results.append({"source": item[0], "relationship": item[1], "destination": item[2]})
+        for item in search_output:
+            search_results.append({"source": item["source"], "relationship": item["relationship"], "destination": item["destination"]})
 
         logger.info(f"Returned {len(search_results)} graph search results")
 
         return search_results
+
+    def search(self, query, filters, limit=100):
+        """Backward-compatible wrapper. No LLM extraction.
+
+        - query is list/tuple/set: pass directly to search_nodes.
+        - query is str: split by comma (or keep as single item) -> search_nodes.
+
+        Args:
+            query (str | list[str]): Fact text or node name(s) to search from.
+            filters (dict): Scope filters; must contain at least `user_id`.
+            limit (int): **Traversal depth** (hops) in the graph.  Defaults to 100.
+
+        Returns:
+            list[dict]: Relations, each with keys:
+                - "source"        : str, start node name
+                - "relationship"  : str, edge type
+                - "destination"   : str, end node name
+        """
+        try:
+            depth = int(limit)
+        except (TypeError, ValueError):
+            depth = 1
+        if depth <= 0:
+            return []
+
+        if isinstance(query, (list, tuple, set)):
+            node_names = [str(node).strip() for node in query if str(node).strip()]
+        elif isinstance(query, str):
+            node_names = [node.strip() for node in query.split(",") if node.strip()] if "," in query else [query.strip()]
+        else:
+            node_names = [str(query).strip()] if str(query).strip() else []
+
+        return self.search_nodes(node_names, filters, depth=depth, limit=limit)
 
     def _search_graph_db_by_depth(self, node_list, filters, depth=1, limit=20):
         """Search relations by traversing from given nodes up to a fixed depth."""
@@ -326,7 +292,11 @@ class MemoryGraph:
         return final_results
 
     def _retrieve_nodes_from_data(self, data, filters):
-        """Extracts all the entities mentioned in the query."""
+        """Extracts all the entities mentioned in the query.
+
+        DEPRECATED: Entity extraction should be performed upstream by the add engine.
+        Use `ingest()` which accepts pre-extracted `entity_type_map`.
+        """
         _tools = [EXTRACT_ENTITIES_TOOL]
         if self.llm_provider in ["azure_openai_structured", "openai_structured"]:
             _tools = [EXTRACT_ENTITIES_STRUCT_TOOL]
@@ -359,7 +329,11 @@ class MemoryGraph:
         return entity_type_map
 
     def _establish_nodes_relations_from_data(self, data, filters, entity_type_map):
-        """Establish relations among the extracted nodes."""
+        """Establish relations among the extracted nodes.
+
+        DEPRECATED: Relation extraction should be performed upstream by the add engine.
+        Use `ingest()` which accepts pre-extracted `relations`.
+        """
 
         # Compose user identification string for prompt
         user_identity = f"user_id: {filters['user_id']}"
@@ -401,7 +375,11 @@ class MemoryGraph:
         return entities
 
     def _search_graph_db(self, node_list, filters, limit=100):
-        """Search similar nodes among and their respective incoming and outgoing relations."""
+        """Search similar nodes among and their respective incoming and outgoing relations.
+
+        DEPRECATED: Embedding-based similarity search is no longer needed in the add flow.
+        Use `ingest()` which relies on exact MERGE by node name.
+        """
         result_relations = []
 
         # Build node properties for filtering
@@ -453,7 +431,11 @@ class MemoryGraph:
         return result_relations
 
     def _get_delete_entities_from_search_output(self, search_output, data, filters):
-        """Get the entities to be deleted from the search output."""
+        """Get the entities to be deleted from the search output.
+
+        DEPRECATED: Deletion decisions should be made upstream by the add engine.
+        Use `ingest()` and pass `to_be_deleted` directly.
+        """
         search_output_string = format_entities(search_output)
 
         # Compose user identification string for prompt
@@ -544,7 +526,11 @@ class MemoryGraph:
         return results
 
     def _add_entities(self, to_be_added, filters, entity_type_map):
-        """Add the new entities to the graph. Merge the nodes if they already exist."""
+        """Add the new entities to the graph. Merge the nodes if they already exist.
+
+        DEPRECATED: Replaced by `ingest()` which uses exact MERGE without
+        embedding similarity search. Use `ingest()` for new code.
+        """
         user_id = filters["user_id"]
         agent_id = filters.get("agent_id", None)
         run_id = filters.get("run_id", None)
@@ -748,6 +734,8 @@ class MemoryGraph:
         return entity_list
 
     def _search_source_node(self, source_embedding, filters, threshold=0.9):
+        # DEPRECATED: Embedding-based node lookup is no longer needed.
+        # Use `ingest()` which relies on exact MERGE by node name.
         # Build WHERE conditions
         where_conditions = ["source_candidate.embedding IS NOT NULL", "source_candidate.user_id = $user_id"]
         if filters.get("agent_id"):
@@ -785,6 +773,8 @@ class MemoryGraph:
         return result
 
     def _search_destination_node(self, destination_embedding, filters, threshold=0.9):
+        # DEPRECATED: Embedding-based node lookup is no longer needed.
+        # Use `ingest()` which relies on exact MERGE by node name.
         # Build WHERE conditions
         where_conditions = ["destination_candidate.embedding IS NOT NULL", "destination_candidate.user_id = $user_id"]
         if filters.get("agent_id"):
@@ -821,6 +811,103 @@ class MemoryGraph:
 
         result = self.graph.query(cypher, params=params)
         return result
+
+    def ingest(self, entity_type_map, relations, filters, to_be_deleted=None):
+        """Add-engine friendly interface: pure graph write without LLM/embedding calls.
+
+        Receives pre-extracted structured data and performs exact MERGE
+        operations. No entity extraction, no relation extraction, no
+        embedding similarity search.
+
+        Args:
+            entity_type_map: dict of {entity_name: entity_type}.
+            relations: list of dicts, each with 'source', 'relationship', 'destination'.
+            filters: dict with at least 'user_id'; optional 'agent_id', 'run_id'.
+            to_be_deleted: optional list of dicts, each with 'source', 'relationship', 'destination'.
+
+        Returns:
+            dict: {'deleted_entities': [...], 'added_entities': [...]}
+        """
+        # 1. Handle deletions
+        deleted = []
+        if to_be_deleted:
+            deleted = self._delete_entities(to_be_deleted, filters)
+
+        # 2. Normalize inputs
+        entity_type_map = {
+            k.lower().replace(" ", "_"): v.lower().replace(" ", "_")
+            for k, v in entity_type_map.items()
+        }
+        for item in relations:
+            item["source"] = item["source"].lower().replace(" ", "_")
+            item["relationship"] = sanitize_relationship_for_cypher(
+                item["relationship"].lower().replace(" ", "_")
+            )
+            item["destination"] = item["destination"].lower().replace(" ", "_")
+
+        # 3. Write relations
+        user_id = filters["user_id"]
+        agent_id = filters.get("agent_id")
+        run_id = filters.get("run_id")
+
+        added = []
+        for item in relations:
+            source = item["source"]
+            destination = item["destination"]
+            relationship = item["relationship"]
+
+            source_type = entity_type_map.get(source, "__User__")
+            destination_type = entity_type_map.get(destination, "__User__")
+
+            source_label = self.node_label if self.node_label else f":`{source_type}`"
+            destination_label = self.node_label if self.node_label else f":`{destination_type}`"
+            source_extra_set = f", source:`{source_type}`" if self.node_label else ""
+            destination_extra_set = f", destination:`{destination_type}`" if self.node_label else ""
+
+            source_props = ["name: $source_name", "user_id: $user_id"]
+            dest_props = ["name: $dest_name", "user_id: $user_id"]
+            if agent_id:
+                source_props.append("agent_id: $agent_id")
+                dest_props.append("agent_id: $agent_id")
+            if run_id:
+                source_props.append("run_id: $run_id")
+                dest_props.append("run_id: $run_id")
+            source_props_str = ", ".join(source_props)
+            dest_props_str = ", ".join(dest_props)
+
+            cypher = f"""
+            MERGE (source {source_label} {{{source_props_str}}})
+            ON CREATE SET source.created = timestamp(),
+                        source.mentions = 1
+                        {source_extra_set}
+            ON MATCH SET source.mentions = coalesce(source.mentions, 0) + 1
+            WITH source
+            MERGE (destination {destination_label} {{{dest_props_str}}})
+            ON CREATE SET destination.created = timestamp(),
+                        destination.mentions = 1
+                        {destination_extra_set}
+            ON MATCH SET destination.mentions = coalesce(destination.mentions, 0) + 1
+            WITH source, destination
+            MERGE (source)-[rel:{relationship}]->(destination)
+            ON CREATE SET rel.created = timestamp(), rel.mentions = 1
+            ON MATCH SET rel.mentions = coalesce(rel.mentions, 0) + 1
+            RETURN source.name AS source, type(rel) AS relationship, destination.name AS target
+            """
+
+            params = {
+                "source_name": source,
+                "dest_name": destination,
+                "user_id": user_id,
+            }
+            if agent_id:
+                params["agent_id"] = agent_id
+            if run_id:
+                params["run_id"] = run_id
+
+            result = self.graph.query(cypher, params=params)
+            added.append(result)
+
+        return {"deleted_entities": deleted, "added_entities": added}
 
     # Reset is not defined in base.py
     def reset(self):

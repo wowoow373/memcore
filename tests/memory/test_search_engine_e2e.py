@@ -7,6 +7,7 @@ Prerequisites:
 
 import os
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -206,20 +207,19 @@ class Neo4jGraphStore:
     def __init__(self, driver):
         self.driver = driver
 
-    def search(self, query, filters, limit):
-        """Traverse graph from nodes matching the query."""
-        if isinstance(query, str):
-            names = [query.lower().replace(" ", "_")]
-        else:
-            names = []
-        depth = max(1, int(limit))
+    def search_nodes(self, node_names, filters, depth=2, limit=100):
+        """Pure graph traversal from given node names (new interface)."""
+        names = [n.lower().replace(" ", "_") for n in node_names if n]
+        if not names:
+            return []
+        safe_depth = max(1, int(depth))
 
         with self.driver.session() as session:
             result = session.run(
                 f"""
                 MATCH (n:__Entity__ {{user_id: $user_id}})
                 WHERE n.name IN $names
-                MATCH path = (n)-[*1..{depth}]-(m:__Entity__ {{user_id: $user_id}})
+                MATCH path = (n)-[*1..{safe_depth}]-(m:__Entity__ {{user_id: $user_id}})
                 UNWIND relationships(path) AS rel
                 WITH DISTINCT startNode(rel) AS src, rel, endNode(rel) AS dst
                 WHERE src.user_id = $user_id AND dst.user_id = $user_id
@@ -228,9 +228,19 @@ class Neo4jGraphStore:
                 """,
                 user_id=filters.get("user_id", "user"),
                 names=names,
-                limit=limit * 20,
+                limit=limit,
             )
             return [dict(record) for record in result]
+
+    def search(self, query, filters, limit):
+        """Backward-compatible wrapper."""
+        if isinstance(query, str):
+            node_names = [query.strip()]
+        elif isinstance(query, (list, tuple, set)):
+            node_names = [str(n).strip() for n in query if str(n).strip()]
+        else:
+            node_names = [str(query).strip()] if str(query).strip() else []
+        return self.search_nodes(node_names, filters, depth=limit, limit=limit * 20)
 
     def delete_all(self, filters):
         """Delete all nodes for a given user."""
@@ -262,13 +272,49 @@ def neo4j_driver():
 
 @pytest.fixture
 def search_engine_with_graph(embedding_model, vector_store, neo4j_driver):
-    """Create a SearchEngine with real vector + real neo4j graph backend."""
+    """Create a SearchEngine with real vector + real neo4j graph backend (no LLM)."""
     graph_store = Neo4jGraphStore(neo4j_driver)
     return SearchEngine(
         embedding_model=embedding_model,
         vector_store=vector_store,
         graph_store=graph_store,
         reranker=None,
+    )
+
+
+@pytest.fixture
+def mock_llm_for_entity_extraction():
+    """Mock LLM that extracts entities via tool-call (mirrors real LLM behavior)."""
+    llm = MagicMock()
+    llm.__class__.__name__ = "OpenAILLM"
+    llm.generate_response.return_value = {
+        "tool_calls": [
+            {
+                "name": "extract_entities",
+                "arguments": {
+                    "entities": [
+                        {"entity": "Alice", "entity_type": "person"},
+                        {"entity": "Bob", "entity_type": "person"},
+                    ]
+                },
+            }
+        ]
+    }
+    return llm
+
+
+@pytest.fixture
+def search_engine_with_graph_and_llm(
+    embedding_model, vector_store, neo4j_driver, mock_llm_for_entity_extraction
+):
+    """Create a SearchEngine with real vector + real neo4j + mock LLM for entity extraction."""
+    graph_store = Neo4jGraphStore(neo4j_driver)
+    return SearchEngine(
+        embedding_model=embedding_model,
+        vector_store=vector_store,
+        graph_store=graph_store,
+        reranker=None,
+        llm=mock_llm_for_entity_extraction,
     )
 
 
@@ -437,6 +483,133 @@ class TestE2EGraphRecall:
             destinations = {r["destination"] for r in result["relations"]}
             assert "alice" in sources
             assert "carol" in destinations
+        finally:
+            with neo4j_driver.session() as session:
+                session.run(
+                    "MATCH (n:__Entity__ {user_id: $user_id}) DETACH DELETE n",
+                    user_id=user_id,
+                )
+
+
+class TestE2EGraphRecallWithLLMExtraction:
+    """E2E tests verifying LLM entity extraction moved to SearchEngine layer."""
+
+    def test_e2e_graph_recall_uses_llm_extraction(
+        self,
+        search_engine_with_graph_and_llm,
+        mock_llm_for_entity_extraction,
+        vector_store,
+        embedding_model,
+        neo4j_driver,
+    ):
+        """LLM extracts entities from natural language query, then search_nodes traverses graph."""
+        user_id = f"e2e-llm-extract-{uuid.uuid4().hex[:8]}"
+        test_text = "Alice is a good friend of Bob"
+        test_id = str(uuid.uuid4())
+
+        # 1. Insert vector data
+        embedding = embedding_model.embed(test_text, "add")
+        vector_store.insert(
+            vectors=[embedding],
+            ids=[test_id],
+            payloads=[{
+                "data": test_text,
+                "hash": "h1",
+                "user_id": user_id,
+            }],
+        )
+
+        # 2. Insert graph data directly via Cypher
+        with neo4j_driver.session() as session:
+            session.run(
+                """
+                CREATE (a:__Entity__ {name: 'alice', user_id: $user_id})
+                CREATE (b:__Entity__ {name: 'bob', user_id: $user_id})
+                CREATE (a)-[:KNOWS]->(b)
+                """,
+                user_id=user_id,
+            )
+
+        try:
+            # 3. Search with natural language query
+            result = search_engine_with_graph_and_llm.search(
+                query="Alice and Bob are friends",
+                filters={"user_id": user_id},
+                limit=10,
+                graph_depth=2,
+            )
+
+            # 4. Verify vector results
+            assert "results" in result
+            assert "relations" in result
+            ids = [r["id"] for r in result["results"]]
+            assert test_id in ids
+
+            # 5. Verify graph results contain the KNOWS relation
+            assert len(result["relations"]) >= 1
+            rel = result["relations"][0]
+            assert rel["source"] == "alice"
+            assert rel["relationship"] == "KNOWS"
+            assert rel["destination"] == "bob"
+
+            # 6. Verify LLM was called for entity extraction
+            mock_llm_for_entity_extraction.generate_response.assert_called()
+            call_messages = mock_llm_for_entity_extraction.generate_response.call_args[1]["messages"]
+            assert any("Alice and Bob are friends" in m.get("content", "") for m in call_messages)
+        finally:
+            with neo4j_driver.session() as session:
+                session.run(
+                    "MATCH (n:__Entity__ {user_id: $user_id}) DETACH DELETE n",
+                    user_id=user_id,
+                )
+
+    def test_e2e_llm_extraction_self_reference(
+        self,
+        search_engine_with_graph_and_llm,
+        mock_llm_for_entity_extraction,
+        neo4j_driver,
+    ):
+        """LLM system prompt contains user_id for self-reference resolution."""
+        user_id = f"e2e-self-ref-{uuid.uuid4().hex[:8]}"
+
+        with neo4j_driver.session() as session:
+            session.run(
+                """
+                CREATE (a:__Entity__ {name: 'alice', user_id: $user_id})
+                CREATE (b:__Entity__ {name: 'bob', user_id: $user_id})
+                CREATE (a)-[:KNOWS]->(b)
+                """,
+                user_id=user_id,
+            )
+
+        # Override mock to simulate self-reference extraction
+        mock_llm_for_entity_extraction.generate_response.return_value = {
+            "tool_calls": [
+                {
+                    "name": "extract_entities",
+                    "arguments": {
+                        "entities": [
+                            {"entity": user_id, "entity_type": "user"},
+                            {"entity": "Bob", "entity_type": "person"},
+                        ]
+                    },
+                }
+            ]
+        }
+
+        try:
+            result = search_engine_with_graph_and_llm.search(
+                query="I know Bob",
+                filters={"user_id": user_id},
+                limit=10,
+                graph_depth=2,
+            )
+
+            assert "relations" in result
+            # LLM system prompt should contain user_id
+            call_messages = mock_llm_for_entity_extraction.generate_response.call_args[1]["messages"]
+            system_content = call_messages[0]["content"]
+            assert user_id in system_content
         finally:
             with neo4j_driver.session() as session:
                 session.run(
