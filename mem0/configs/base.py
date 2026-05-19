@@ -64,6 +64,39 @@ class MemoryConfig(BaseModel):
         description="Custom prompt for the update memory",
         default=None,
     )
+    process_memory: Optional["ProcessMemoryConfig"] = Field(
+        description="Configuration for process memory (step-level task memory)",
+        default=None,
+    )
+
+
+class ProcessMemoryConfig(BaseModel):
+    vector_store: VectorStoreConfig = Field(
+        description="Vector store config for process chunks and summaries",
+        default_factory=VectorStoreConfig,
+    )
+    graph_store: GraphStoreConfig = Field(
+        description="Graph store config for Step nodes",
+        default_factory=GraphStoreConfig,
+    )
+    graph_search_depth: int = Field(
+        description="Graph traversal depth during dedup search",
+        default=10,
+    )
+    chunk_top_k: int = Field(
+        description="Number of chunk results to retrieve",
+        default=5,
+    )
+    summary_top_k: int = Field(
+        description="Number of summary results to retrieve",
+        default=3,
+    )
+    semantic_filter_threshold: float = Field(
+        description="Cosine similarity threshold for semantic filtering",
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+    )
 
 
 class AzureConfig(BaseModel):

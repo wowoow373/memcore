@@ -324,6 +324,43 @@ class Memory(MemoryBase):
             graph=self.graph if self.enable_graph else None,
         )
 
+        # Initialize process memory components (if configured)
+        self.enable_process_memory = False
+        if self.config.process_memory:
+            self.enable_process_memory = True
+
+            # Dedicated vector store for process chunks/summaries
+            self.process_vector_store = VectorStoreFactory.create(
+                self.config.process_memory.vector_store.provider,
+                self.config.process_memory.vector_store.config,
+            )
+
+            # Dedicated graph store with Step node_label
+            # Build a config whose graph_store points to process_memory.graph_store
+            process_config = deepcopy(self.config)
+            process_config.graph_store = self.config.process_memory.graph_store
+            from mem0.memory.graph_memory import MemoryGraph as ProcessGraph
+            self.process_graph_store = ProcessGraph(process_config, node_label=":Step")
+
+            # Search engine for process memory (Flow 1 dedup + Flow 2 search)
+            from mem0.memory.process_search_engine import ProcessMemorySearchEngine
+            self.process_search_engine = ProcessMemorySearchEngine(
+                embedding_model=self.embedding_model,
+                vector_store=self.process_vector_store,
+                graph_store=self.process_graph_store,
+            )
+
+            # Add engine for process memory (Flow 1 only)
+            from mem0.memory.process_add_engine import ProcessMemoryAddEngine
+            self.process_add_engine = ProcessMemoryAddEngine(
+                embedding_model=self.embedding_model,
+                vector_store=self.process_vector_store,
+                llm=self.llm,
+                db=self.db,
+                search_engine=self.process_search_engine,
+                graph_store=self.process_graph_store,
+            )
+
         capture_event("mem0.init", self, {"sync_type": "sync"})
 
     @classmethod
@@ -428,12 +465,15 @@ class Memory(MemoryBase):
             input_metadata=metadata,
         )
 
-        if memory_type is not None and memory_type != MemoryType.PROCEDURAL.value:
+        if memory_type is not None and memory_type not in (
+            MemoryType.PROCEDURAL.value,
+            "process_memory",
+        ):
             raise Mem0ValidationError(
-                message=f"Invalid 'memory_type'. Please pass {MemoryType.PROCEDURAL.value} to create procedural memories.",
+                message=f"Invalid 'memory_type'. Please pass {MemoryType.PROCEDURAL.value} or 'process_memory'.",
                 error_code="VALIDATION_002",
-                details={"provided_type": memory_type, "valid_type": MemoryType.PROCEDURAL.value},
-                suggestion=f"Use '{MemoryType.PROCEDURAL.value}' to create procedural memories."
+                details={"provided_type": memory_type, "valid_types": [MemoryType.PROCEDURAL.value, "process_memory"]},
+                suggestion=f"Use '{MemoryType.PROCEDURAL.value}' for procedural or 'process_memory' for process memories."
             )
 
         if isinstance(messages, str):
@@ -454,6 +494,22 @@ class Memory(MemoryBase):
             # TODO: procedural_memory will be integrated into AddEngine in a future iteration
             results = self._create_procedural_memory(messages, metadata=processed_metadata, prompt=prompt)
             return results
+
+        if memory_type == "process_memory":
+            if not self.enable_process_memory:
+                raise Mem0ValidationError(
+                    message="Process memory is not configured. Add 'process_memory' to your MemoryConfig.",
+                    error_code="VALIDATION_005",
+                    details={},
+                    suggestion="Set config.process_memory in your MemoryConfig to enable process memory.",
+                )
+            summary = messages if isinstance(messages, list) else [messages]
+            result = self.process_add_engine.add(
+                summaries=summary,
+                metadata=processed_metadata,
+                filters=effective_filters,
+            )
+            return result
 
         if self.config.llm.config.get("enable_vision"):
             messages = parse_vision_messages(messages, self.llm, self.config.llm.config.get("vision_details"))
@@ -708,13 +764,56 @@ class Memory(MemoryBase):
             rerank=rerank,
         )
 
+    def search_process(
+        self,
+        current_step: dict,
+        previous_step: Optional[dict] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        task_estimate: Optional[str] = None,
+        graph_hop: int = 1,
+        chunk_top_k: int = 5,
+        summary_top_k: int = 3,
+        semantic_threshold: float = 0.6,
+    ) -> dict:
+        """Flow 2 entry point: process memory search during task execution.
+
+        Delegates to ProcessMemorySearchEngine.search_for_step().
+        """
+        if not self.enable_process_memory:
+            raise Mem0ValidationError(
+                message="Process memory is not configured. Add 'process_memory' to your MemoryConfig.",
+                error_code="VALIDATION_005",
+                details={},
+                suggestion="Set config.process_memory in your MemoryConfig to enable process memory.",
+            )
+
+        filters = {"user_id": user_id}
+        if agent_id:
+            filters["agent_id"] = agent_id
+        if run_id:
+            filters["run_id"] = run_id
+
+        cfg = self.config.process_memory
+        return self.process_search_engine.search_for_step(
+            current_step=current_step,
+            previous_step=previous_step,
+            filters=filters,
+            task_estimate=task_estimate,
+            graph_hop=graph_hop if graph_hop is not None else cfg.graph_search_depth,
+            chunk_top_k=chunk_top_k if chunk_top_k is not None else cfg.chunk_top_k,
+            summary_top_k=summary_top_k if summary_top_k is not None else cfg.summary_top_k,
+            semantic_threshold=semantic_threshold if semantic_threshold is not None else cfg.semantic_filter_threshold,
+        )
+
     def _process_metadata_filters(self, metadata_filters: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process enhanced metadata filters and convert them to vector store compatible format.
-        
+
         Args:
             metadata_filters: Enhanced metadata filters with operators
-            
+
         Returns:
             Dict of processed filters compatible with vector store
         """

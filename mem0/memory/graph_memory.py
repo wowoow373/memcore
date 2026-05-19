@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryGraph:
-    def __init__(self, config):
+    def __init__(self, config, node_label=None):
         self.config = config
         self.graph = Neo4jGraph(
             url=self.config.graph_store.config.url,
@@ -40,9 +40,15 @@ class MemoryGraph:
         self.embedding_model = EmbedderFactory.create(
             self.config.embedder.provider, self.config.embedder.config, self.config.vector_store.config
         )
-        self.node_label = ":`__Entity__`" if self.config.graph_store.config.base_label else ""
 
-        if self.config.graph_store.config.base_label:
+        if node_label is not None:
+            self.node_label = node_label
+        elif self.config.graph_store.config.base_label:
+            self.node_label = ":`__Entity__`"
+        else:
+            self.node_label = ""
+
+        if self.config.graph_store.config.base_label and node_label is None:
             # Safely add user_id index
             try:
                 self.graph.query(f"CREATE INDEX entity_single IF NOT EXISTS FOR (n {self.node_label}) ON (n.user_id)")
@@ -143,6 +149,73 @@ class MemoryGraph:
         logger.info(f"Returned {len(search_results)} graph search results")
 
         return search_results
+
+    def search_nodes_by_embedding(
+        self,
+        embedding: list[float],
+        filters: dict,
+        top_k: int = 10,
+        threshold: float = 0.6,
+    ) -> list[dict]:
+        """Search nodes by embedding cosine similarity on brief_embedding property.
+
+        Receives a pre-computed embedding and matches against Step nodes that
+        have a brief_embedding property. The caller (ProcessMemorySearchEngine)
+        is responsible for computing the embedding externally.
+
+        Args:
+            embedding: Pre-computed embedding vector.
+            filters: Scope filters; must contain at least user_id.
+            top_k: Max number of nodes to return.
+            threshold: Minimum cosine similarity score (0.0-1.0).
+
+        Returns:
+            list[dict]: Nodes with keys name, brief, goal, step, action, score.
+        """
+        if not embedding:
+            return []
+        user_id = filters.get("user_id")
+        if not user_id:
+            return []
+
+        conditions = ["n.user_id = $user_id", "n.brief_embedding IS NOT NULL"]
+        if filters.get("agent_id"):
+            conditions.append("n.agent_id = $agent_id")
+        if filters.get("run_id"):
+            conditions.append("n.run_id = $run_id")
+        where_clause = " AND ".join(conditions)
+
+        cypher = f"""
+        MATCH (n {self.node_label})
+        WHERE {where_clause}
+        WITH n, vector.similarity.cosine(n.brief_embedding, $embedding) AS score
+        WHERE score >= $threshold
+        RETURN n.name AS name,
+               n.brief AS brief,
+               n.goal AS goal,
+               n.step AS step,
+               n.action AS action,
+               score
+        ORDER BY score DESC
+        LIMIT $top_k
+        """
+
+        params = {
+            "embedding": embedding,
+            "user_id": user_id,
+            "threshold": threshold,
+            "top_k": top_k,
+        }
+        if filters.get("agent_id"):
+            params["agent_id"] = filters["agent_id"]
+        if filters.get("run_id"):
+            params["run_id"] = filters["run_id"]
+
+        try:
+            return self.graph.query(cypher, params=params)
+        except Exception as e:
+            logger.error(f"search_nodes_by_embedding failed: {e}")
+            return []
 
     def search(self, query, filters, limit=100):
         """Backward-compatible wrapper. No LLM extraction.
@@ -812,7 +885,7 @@ class MemoryGraph:
         result = self.graph.query(cypher, params=params)
         return result
 
-    def ingest(self, entity_type_map, relations, filters, to_be_deleted=None):
+    def ingest(self, entity_type_map, relations, filters, to_be_deleted=None, node_properties=None):
         """Add-engine friendly interface: pure graph write without LLM/embedding calls.
 
         Receives pre-extracted structured data and performs exact MERGE
@@ -824,6 +897,9 @@ class MemoryGraph:
             relations: list of dicts, each with 'source', 'relationship', 'destination'.
             filters: dict with at least 'user_id'; optional 'agent_id', 'run_id'.
             to_be_deleted: optional list of dicts, each with 'source', 'relationship', 'destination'.
+            node_properties: optional dict of {node_name: {prop: value}}. When provided,
+                extra properties (brief, goal, action, brief_embedding) are set on
+                matched/created nodes. brief_embedding is stored as a vector property.
 
         Returns:
             dict: {'deleted_entities': [...], 'added_entities': [...]}
@@ -875,18 +951,54 @@ class MemoryGraph:
             source_props_str = ", ".join(source_props)
             dest_props_str = ", ".join(dest_props)
 
+            # Build node_properties extra SET clauses and params
+            source_np = (node_properties or {}).get(source, {})
+            dest_np = (node_properties or {}).get(destination, {})
+
+            source_create_set = ""
+            source_match_set = ""
+            source_vector_call = ""
+            source_vector_with = ""
+            dest_create_set = ""
+            dest_match_set = ""
+            dest_vector_call = ""
+            dest_vector_with = ""
+
+            if source_np:
+                for key in ("brief", "goal", "action"):
+                    if key in source_np:
+                        source_create_set += f",\n                            source.{key} = $source_{key}"
+                        source_match_set += f",\n                            source.{key} = $source_{key}"
+                if "brief_embedding" in source_np:
+                    source_vector_call = (
+                        "\n            CALL db.create.setNodeVectorProperty("
+                        "source, 'brief_embedding', $source_brief_embedding)"
+                    )
+                    source_vector_with = "\n            WITH source"
+
+            if dest_np:
+                for key in ("brief", "goal", "action"):
+                    if key in dest_np:
+                        dest_create_set += f",\n                            destination.{key} = $dest_{key}"
+                        dest_match_set += f",\n                            destination.{key} = $dest_{key}"
+                if "brief_embedding" in dest_np:
+                    dest_vector_call = (
+                        "\n            CALL db.create.setNodeVectorProperty("
+                        "destination, 'brief_embedding', $dest_brief_embedding)"
+                    )
+                    dest_vector_with = "\n            WITH destination"
+
             cypher = f"""
             MERGE (source {source_label} {{{source_props_str}}})
             ON CREATE SET source.created = timestamp(),
                         source.mentions = 1
-                        {source_extra_set}
-            ON MATCH SET source.mentions = coalesce(source.mentions, 0) + 1
-            WITH source
+                        {source_extra_set}{source_create_set}
+            ON MATCH SET source.mentions = coalesce(source.mentions, 0) + 1{source_match_set}{source_vector_call}{source_vector_with}
             MERGE (destination {destination_label} {{{dest_props_str}}})
             ON CREATE SET destination.created = timestamp(),
                         destination.mentions = 1
-                        {destination_extra_set}
-            ON MATCH SET destination.mentions = coalesce(destination.mentions, 0) + 1
+                        {destination_extra_set}{dest_create_set}
+            ON MATCH SET destination.mentions = coalesce(destination.mentions, 0) + 1{dest_match_set}{dest_vector_call}{dest_vector_with}
             WITH source, destination
             MERGE (source)-[rel:{relationship}]->(destination)
             ON CREATE SET rel.created = timestamp(), rel.mentions = 1
@@ -903,6 +1015,12 @@ class MemoryGraph:
                 params["agent_id"] = agent_id
             if run_id:
                 params["run_id"] = run_id
+
+            # Add node_properties params
+            for prefix, np in [("source", source_np), ("dest", dest_np)]:
+                for key in ("brief", "goal", "action", "brief_embedding"):
+                    if key in np:
+                        params[f"{prefix}_{key}"] = np[key]
 
             result = self.graph.query(cypher, params=params)
             added.append(result)
