@@ -29,12 +29,17 @@
 
 ## 设计文档
 
-- [process-memory-api-spec.md](process-memory-api-spec.md) — 完整接口规格书（标准记忆 + 流程记忆的 Search/Add/Back 全周期）
-- [langgraph-refactor-design-spec.md](langgraph-refactor-design-spec.md) — 标准记忆 LangGraph 重构设计
-- [langgraph-refactor-directory-plan.md](langgraph-refactor-directory-plan.md) — 目录结构规划
-- [process-memory-design.md](process-memory-design.md) — 流程记忆整体设计
-- [process-add-engine-design.md](process-add-engine-design.md) — ProcessMemoryAddEngine 详细设计
-- [process-search-engine-design.md](process-search-engine-design.md) — ProcessMemorySearchEngine 详细设计
+- [memory-api-spec.md](memory-api-spec.md) — 完整接口规格书（标准记忆 + 流程记忆的 Search/Add/Back 全周期）
+- [langgraph-refactor-design-spec.md](archive/designs/langgraph-refactor-design-spec.md) — 标准记忆 LangGraph 重构设计
+- [add-engine-design.md](archive/designs/add-engine-design.md) — AddEngine 设计规格
+- [process-memory-design.md](archive/designs/process-memory-design.md) — 流程记忆整体设计
+- [process-add-engine-design.md](archive/designs/process-add-engine-design.md) — ProcessMemoryAddEngine 详细设计
+- [process-search-engine-design.md](archive/designs/process-search-engine-design.md) — ProcessMemorySearchEngine 详细设计
+- [lucky-discovering-dahl.md](archive/designs/lucky-discovering-dahl.md) — GraphStore 与 LLM 实体提取职责拆分
+- [search-engine-implementation-plan.md](archive/plans/search-engine-implementation-plan.md) — SearchEngine 重构实施计划
+- [add-engine-implementation.md](archive/plans/add-engine-implementation.md) — AddEngine 实现文档
+- [langgraph-refactor-directory-plan.md](archive/plans/langgraph-refactor-directory-plan.md) — LangGraph 重构目录结构规划
+- [process-memory-directory-plan.md](archive/plans/process-memory-directory-plan.md) — Process Memory 目录结构
 
 ## 原始项目
 
