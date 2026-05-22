@@ -27,6 +27,10 @@
 - `MemoryConfig.process_memory` 可选字段，设为 `ProcessMemoryConfig` 后启用流程记忆。
 - `Memory.add(memory_type="process_memory")` 路由到 ProcessMemoryAddEngine。
 
+## 部署与接入
+
+- [integration-guide.md](integration-guide.md) — 完整部署与接入指南。包含 Docker 启动、FastAPI 后端启动、MCP Server 启动、Agent SDK 集成示例。
+
 ## 设计文档
 
 - [memory-api-spec.md](memory-api-spec.md) — 完整接口规格书（标准记忆 + 流程记忆的 Search/Add/Back 全周期）

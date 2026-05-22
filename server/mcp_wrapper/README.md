@@ -1,5 +1,7 @@
 # mem0 MCP Wrapper — 双 Server 架构
 
+> 完整部署与接入指南见根目录 [integration-guide.md](../../integration-guide.md)。本文档侧重于 MCP 协议细节和工具内部实现。
+
 MCP (Model Context Protocol) 包装层，把 mem0 的 FastAPI REST 端点暴露为 MCP 工具。支持**工具分离**：标准记忆和流程记忆各自运行在独立的 MCP Server 上，供不同类型的 AI Agent 使用。
 
 ## 架构总览
