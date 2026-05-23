@@ -70,7 +70,7 @@ mcp = FastMCP(
 
 @mcp.tool()
 async def write_process_memory(
-    messages: List[Dict[str, str]],
+    messages: List[Dict[str, Any]],
     user_id: str | None = None,
     agent_id: str | None = None,
     run_id: str | None = None,
