@@ -921,6 +921,12 @@ class MemoryGraph:
             )
             item["destination"] = item["destination"].lower().replace(" ", "_")
 
+        if node_properties:
+            node_properties = {
+                k.lower().replace(" ", "_"): v
+                for k, v in node_properties.items()
+            }
+
         # 3. Write relations
         user_id = filters["user_id"]
         agent_id = filters.get("agent_id")
@@ -986,7 +992,7 @@ class MemoryGraph:
                         "\n            CALL db.create.setNodeVectorProperty("
                         "destination, 'brief_embedding', $dest_brief_embedding)"
                     )
-                    dest_vector_with = "\n            WITH destination"
+                    dest_vector_with = "\n            WITH source, destination"
 
             cypher = f"""
             MERGE (source {source_label} {{{source_props_str}}})
